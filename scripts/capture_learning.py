@@ -13,9 +13,7 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.reflect_utils import (
-    get_queue_path,
-    load_queue,
-    save_queue,
+    append_to_queue,
     detect_patterns,
     create_queue_item,
     should_include_message,
@@ -49,11 +47,11 @@ def main() -> int:
     if len(prompt) > MAX_CAPTURE_PROMPT_LENGTH and "remember:" not in prompt.lower():
         return 0
 
-    # Initialize queue if doesn't exist
-    queue_path = get_queue_path()
-    if not queue_path.exists():
-        queue_path.parent.mkdir(parents=True, exist_ok=True)
-        queue_path.write_text("[]", encoding="utf-8")
+    # Scope the queue to the project the user is actually in. The hook payload
+    # carries the session cwd; the process cwd may differ (e.g. Claude launched
+    # from a subdirectory), and keying off it lands captures in a queue folder
+    # /reflect never scans → silent loss.
+    cwd = data.get("cwd") or None
 
     # Detect patterns
     item_type, patterns, confidence, sentiment, decay_days = detect_patterns(prompt)
@@ -67,11 +65,10 @@ def main() -> int:
             confidence=confidence,
             sentiment=sentiment,
             decay_days=decay_days,
+            project=cwd,
         )
 
-        items = load_queue()
-        items.append(queue_item)
-        save_queue(items)
+        append_to_queue(queue_item, project_dir=cwd)
 
         # Output feedback for Claude to acknowledge the capture
         # UserPromptSubmit hooks with exit code 0 add stdout as context

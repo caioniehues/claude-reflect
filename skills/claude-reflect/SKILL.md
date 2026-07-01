@@ -51,7 +51,7 @@ High-confidence corrections:
 - `./.claude/rules/*.md` - Modular rules with optional path-scoping
 - `~/.claude/rules/*.md` - Global modular rules
 - `~/.claude/projects/<project>/memory/*.md` - Auto memory (low-confidence, exploratory)
-- `commands/*.md` - Skill improvements (corrections during skill execution)
+- `./.claude/commands/*.md` (project) / `~/.claude/commands/*.md` (user) - Skill improvements (corrections during skill execution)
 
 ## Example Interaction
 

@@ -18,6 +18,9 @@ from lib.reflect_utils import (
     load_queue,
     save_queue,
     append_to_queue,
+    run_migrations_once,
+    get_migration_sentinel_path,
+    migrate_global_queue,
     iso_timestamp,
     backup_timestamp,
     detect_patterns,
@@ -1108,6 +1111,129 @@ class TestForwardPivotRejection(unittest.TestCase):
         result = detect_patterns("no, now let's use Python instead")
         self.assertEqual(result[0], "auto")
         self.assertEqual(result[3], "correction")
+
+
+class TestQueueDurability(unittest.TestCase):
+    """#1 — atomic writes, corruption recovery, coercion, concurrency."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.qpath = Path(self.temp_dir) / "proj" / "learnings-queue.json"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @patch("lib.reflect_utils.get_queue_path")
+    def test_atomic_write_leaves_prior_queue_intact_on_crash(self, mock_path):
+        mock_path.return_value = self.qpath
+        save_queue([{"message": "original"}])
+
+        # Simulate a crash at the os.replace step of the next write.
+        with patch("lib.reflect_utils.os.replace", side_effect=OSError("crash")):
+            with self.assertRaises(OSError):
+                save_queue([{"message": "new"}])
+
+        # Prior queue survives, and no temp file is left behind.
+        self.assertEqual(load_queue(), [{"message": "original"}])
+        self.assertEqual(list(self.qpath.parent.glob(".queue-*.tmp")), [])
+
+    @patch("lib.reflect_utils.get_queue_path")
+    def test_corrupt_queue_quarantined_not_overwritten(self, mock_path):
+        mock_path.return_value = self.qpath
+        self.qpath.parent.mkdir(parents=True)
+        self.qpath.write_text("{ this is not valid json", encoding="utf-8")
+
+        result = load_queue()
+
+        self.assertEqual(result, [])
+        self.assertFalse(self.qpath.exists())
+        backups = list((self.qpath.parent / "backups").glob("*.corrupt"))
+        self.assertEqual(len(backups), 1)
+        # The bad content is preserved in the backup, not lost.
+        self.assertIn("not valid json", backups[0].read_text(encoding="utf-8"))
+
+    @patch("lib.reflect_utils.get_queue_path")
+    def test_non_list_json_coerced_to_empty(self, mock_path):
+        mock_path.return_value = self.qpath
+        self.qpath.parent.mkdir(parents=True)
+        self.qpath.write_text("{}", encoding="utf-8")
+
+        # Must not raise (was an AttributeError that swallowed captures).
+        result = load_queue()
+        self.assertEqual(result, [])
+
+    @patch("lib.reflect_utils.get_queue_path")
+    def test_concurrent_appends_all_persist(self, mock_path):
+        import threading
+        mock_path.return_value = self.qpath
+        self.qpath.parent.mkdir(parents=True)
+        self.qpath.write_text("[]", encoding="utf-8")
+
+        def worker(n):
+            append_to_queue({"message": f"item-{n}"})
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        result = load_queue()
+        self.assertEqual(len(result), 8)
+        self.assertEqual(
+            sorted(i["message"] for i in result),
+            sorted(f"item-{n}" for n in range(8)),
+        )
+
+    @patch("lib.reflect_utils.get_queue_path")
+    def test_load_queue_does_not_migrate(self, mock_path):
+        # Migration is a filesystem mutation; it must not run on the read path.
+        mock_path.return_value = self.qpath
+        self.qpath.parent.mkdir(parents=True)
+        self.qpath.write_text("[]", encoding="utf-8")
+        with patch("lib.reflect_utils.migrate_global_queue") as mock_migrate:
+            load_queue()
+            mock_migrate.assert_not_called()
+
+
+class TestMigrationSentinel(unittest.TestCase):
+    """#1 — migration moved to a sentinel-guarded one-shot."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.sentinel = Path(self.temp_dir) / ".reflect-migration-done"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @patch("lib.reflect_utils.migrate_global_queue")
+    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    def test_runs_once_then_skips(self, mock_sentinel, mock_migrate):
+        mock_sentinel.return_value = self.sentinel
+
+        run_migrations_once()
+        run_migrations_once()
+        run_migrations_once()
+
+        self.assertEqual(mock_migrate.call_count, 1)
+        self.assertTrue(self.sentinel.exists())
+
+    @patch("lib.reflect_utils.migrate_global_queue")
+    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    def test_failure_does_not_mark_done(self, mock_sentinel, mock_migrate):
+        # A transient migration failure must NOT write the sentinel, so the next
+        # session retries instead of stranding the legacy queue forever.
+        mock_sentinel.return_value = self.sentinel
+        mock_migrate.side_effect = [OSError("transient"), None]
+
+        run_migrations_once()  # fails
+        self.assertFalse(self.sentinel.exists())
+
+        run_migrations_once()  # retries, succeeds
+        self.assertTrue(self.sentinel.exists())
+        self.assertEqual(mock_migrate.call_count, 2)
 
 
 if __name__ == "__main__":

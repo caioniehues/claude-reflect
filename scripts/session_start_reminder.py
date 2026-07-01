@@ -11,11 +11,15 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.reflect_utils import load_queue, get_cleanup_period_days
+from lib.reflect_utils import load_queue, get_cleanup_period_days, run_migrations_once
 
 
 def main() -> int:
     """Main entry point."""
+    # Run one-shot legacy migrations once per session (sentinel-guarded).
+    # Before the reminder gate so it still runs when reminders are disabled.
+    run_migrations_once()
+
     # Check if reminder is disabled via environment variable
     if os.environ.get("CLAUDE_REFLECT_REMINDER", "true").lower() == "false":
         return 0

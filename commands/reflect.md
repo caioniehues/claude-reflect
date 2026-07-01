@@ -34,7 +34,7 @@ Claude-reflect syncs learnings to CLAUDE.md files (including subdirectories), sk
 | **Subdirectory CLAUDE.md** | `./**/CLAUDE.md` | Markdown | Auto-discovered |
 | **Project Rules** | `./.claude/rules/*.md` | Markdown | Modular rules, optional path-scoping |
 | **User Rules** | `~/.claude/rules/*.md` | Markdown | Global modular rules |
-| **Skill Files** | `./commands/*.md` | Markdown | When correction relates to skill |
+| **Skill Files** | `./.claude/commands/*.md` (project), `~/.claude/commands/*.md` (user) | Markdown | When correction relates to skill |
 | **Auto Memory** | `~/.claude/projects/<project>/memory/*.md` | Markdown | Low-confidence, exploratory learnings |
 | **AGENTS.md** | `./AGENTS.md` | Markdown | Industry standard (Codex, Cursor, Aider, Jules, Zed, Factory) |
 
@@ -957,7 +957,7 @@ This should be offered as a skill improvement, not a CLAUDE.md entry.
 {
   "skill_context": {
     "skill_name": "deploy",
-    "skill_file": "commands/deploy.md",
+    "skill_file": ".claude/commands/deploy.md",
     "reason": "Correction followed /deploy invocation"
   }
 }
@@ -966,7 +966,9 @@ This should be offered as a skill improvement, not a CLAUDE.md entry.
 **Detection approach:**
 1. Look for `/command` patterns in recent session messages
 2. Reason about whether the correction relates to that command's workflow
-3. Check if `commands/[skill-name].md` exists in the project
+3. Check if the command file exists. Commands live at `.claude/commands/[skill-name].md`
+   (project) or `~/.claude/commands/[skill-name].md` (user) — this is the single
+   source of truth shared with `/reflect-skills`. Prefer the project file if both exist.
 
 **If skill context detected:**
 - Mark the learning with skill metadata
@@ -1110,11 +1112,11 @@ SKILL IMPROVEMENTS DETECTED
 These learnings appear related to specific skills:
 
 #3: "Run tests before deploying"
-   → Relates to: /deploy (commands/deploy.md)
+   → Relates to: /deploy (.claude/commands/deploy.md)
    → Reason: Correction followed /deploy invocation
 
 #7: "Include file count in commit message"
-   → Relates to: /commit (commands/commit.md)
+   → Relates to: /commit (.claude/commands/commit.md)
    → Reason: Correction during commit workflow
 
 ════════════════════════════════════════════════════════════
@@ -1130,7 +1132,7 @@ For each skill-related learning, use AskUserQuestion:
     "header": "Route",
     "multiSelect": false,
     "options": [
-      {"label": "Skill file (Recommended)", "description": "Add to commands/deploy.md to improve the skill"},
+      {"label": "Skill file (Recommended)", "description": "Add to .claude/commands/deploy.md to improve the skill"},
       {"label": "CLAUDE.md", "description": "Add to project CLAUDE.md as general guidance"},
       {"label": "Both", "description": "Add to skill file AND CLAUDE.md"},
       {"label": "Skip", "description": "Don't add this learning anywhere"}
@@ -1257,8 +1259,8 @@ Global CLAUDE.md (~/.claude/CLAUDE.md):
   After line [N]: ADD "[new entry]"
 
 Skill Files:
-  commands/deploy.md: ADD "Run tests before build step"
-  commands/commit.md: ADD "Include file count in message"
+  .claude/commands/deploy.md: ADD "Run tests before build step"
+  .claude/commands/commit.md: ADD "Include file count in message"
 
 Skipped: [N] learnings (including [M] from other projects)
 ════════════════════════════════════════════════════════════
@@ -1334,7 +1336,7 @@ For learnings routed to auto memory (typically confidence 0.60-0.74):
 
 For learnings routed to skill files in Step 5a.2:
 
-1. Read the skill file (e.g., `commands/deploy.md`)
+1. Read the skill file (e.g., `.claude/commands/deploy.md`)
 2. Reason about WHERE the learning fits in the skill:
    - Is it a new step in the workflow? → Add to steps section
    - Is it a guardrail/constraint? → Add to guardrails section
@@ -1403,8 +1405,8 @@ DONE: Applied [N] learnings
   ✓ ~/.claude/CLAUDE.md    [N] entries
   ✓ ./CLAUDE.md            [N] entries
   ✓ AGENTS.md              [N] entries (if exists)
-  ⚡ commands/deploy.md     [N] skill improvements
-  ⚡ commands/commit.md     [N] skill improvements
+  ⚡ .claude/commands/deploy.md     [N] skill improvements
+  ⚡ .claude/commands/commit.md     [N] skill improvements
 
   Skipped: [N]
 ════════════════════════════════════════════════════════════

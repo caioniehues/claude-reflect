@@ -8,11 +8,38 @@ It detects git commits and reminds the user to run /reflect.
 import sys
 import os
 import json
+import shlex
+from typing import Tuple
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.reflect_utils import load_queue
+
+
+def detect_git_commit(command: str) -> Tuple[bool, bool]:
+    """Classify a Bash command as a git-commit invocation.
+
+    Tokenizes with shlex and requires *adjacent* ``git`` + ``commit`` argv
+    tokens, so substrings inside quotes (echo/grep "git commit"), subcommands
+    (``git commit-graph``), and ``--amend`` mentioned inside a commit *message*
+    don't false-trigger.
+
+    Returns (is_commit, is_amend). ``is_amend`` is true only when ``--amend``
+    appears as a standalone argv token.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quotes etc. — can't reliably parse; treat as non-commit.
+        return (False, False)
+
+    is_commit = any(
+        tokens[i] == "git" and tokens[i + 1] == "commit"
+        for i in range(len(tokens) - 1)
+    )
+    is_amend = "--amend" in tokens
+    return (is_commit, is_amend)
 
 
 def main() -> int:
@@ -31,8 +58,9 @@ def main() -> int:
     if not command:
         return 0
 
-    # Check if it was a git commit command (not amend)
-    if "git commit" not in command or "--amend" in command:
+    # Fire only on a real `git commit` (adjacent argv tokens), and skip amends.
+    is_commit, is_amend = detect_git_commit(command)
+    if not is_commit or is_amend:
         return 0
 
     # Build reminder message
