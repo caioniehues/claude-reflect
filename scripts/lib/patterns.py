@@ -99,8 +99,43 @@ MAX_CAPTURE_PROMPT_LENGTH = 500
 MAX_WEAK_PATTERN_LENGTH = 150
 
 
-# Very short messages without question marks are more likely corrections
-MIN_SHORT_CORRECTION_LENGTH = 80
+# Length→confidence structural signal (see _adjust_confidence_for_length).
+# Short messages read as direct corrections and are boosted; long ones read as
+# context/tasks and are penalized.
+SHORT_CORRECTION_MAX_LENGTH = 80   # below this a message counts as "short" (boosted)
+MID_MESSAGE_MAX_LENGTH = 150       # above this (English only) a mild penalty applies
+LONG_MESSAGE_MAX_LENGTH = 300      # above this a stronger penalty applies
+
+SHORT_CONFIDENCE_BOOST = 0.10      # added when short
+MID_CONFIDENCE_PENALTY = 0.10      # subtracted when mid-length (English only)
+LONG_CONFIDENCE_PENALTY = 0.15     # subtracted when long
+
+CONFIDENCE_BOOST_CAP = 0.90        # ceiling after the short boost
+MID_CONFIDENCE_FLOOR = 0.55        # floor after the mid-length penalty
+LONG_CONFIDENCE_FLOOR = 0.50       # floor after the long penalty
+
+
+def _adjust_confidence_for_length(
+    confidence: float,
+    text_length: int,
+    penalize_mid: bool = True,
+) -> float:
+    """Nudge a correction's confidence by message length (structural signal).
+
+    Short messages read as direct corrections (boost); long ones read as
+    context/tasks (penalty). Shared by the CJK and English correction branches so
+    the shape lives in one place. The English branch is a superset: it also
+    penalizes mid-length messages (``penalize_mid=True``), which the CJK branch
+    historically did not — so CJK passes ``penalize_mid=False`` to keep behavior
+    identical to the pre-refactor code.
+    """
+    if text_length < SHORT_CORRECTION_MAX_LENGTH:
+        return min(CONFIDENCE_BOOST_CAP, confidence + SHORT_CONFIDENCE_BOOST)
+    if text_length > LONG_MESSAGE_MAX_LENGTH:
+        return max(LONG_CONFIDENCE_FLOOR, confidence - LONG_CONFIDENCE_PENALTY)
+    if penalize_mid and text_length > MID_MESSAGE_MAX_LENGTH:
+        return max(MID_CONFIDENCE_FLOOR, confidence - MID_CONFIDENCE_PENALTY)
+    return confidence
 
 
 class Detection(NamedTuple):
@@ -178,10 +213,10 @@ def detect_patterns(text: str) -> Detection:
     if matched_cjk:
         confidence = 0.75 if cjk_strong else 0.60
         decay_days = 90 if cjk_strong else 60
-        if text_length < MIN_SHORT_CORRECTION_LENGTH:
-            confidence = min(0.90, confidence + 0.10)
-        elif text_length > 300:
-            confidence = max(0.50, confidence - 0.15)
+        # CJK branch never penalized mid-length messages — keep that (penalize_mid=False).
+        confidence = _adjust_confidence_for_length(
+            confidence, text_length, penalize_mid=False
+        )
         return Detection("auto", " ".join(matched_cjk), confidence, "correction", decay_days)
 
     # Check for English correction patterns
@@ -221,13 +256,7 @@ def detect_patterns(text: str) -> Detection:
             decay_days = 45
 
         # Adjust confidence based on message length (structural signal)
-        # Short messages are more likely to be direct corrections
-        if text_length < MIN_SHORT_CORRECTION_LENGTH:
-            confidence = min(0.90, confidence + 0.10)  # Boost for short messages
-        elif text_length > 300:
-            confidence = max(0.50, confidence - 0.15)  # Reduce for long messages
-        elif text_length > 150:
-            confidence = max(0.55, confidence - 0.10)
+        confidence = _adjust_confidence_for_length(confidence, text_length)
 
         return Detection("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
 

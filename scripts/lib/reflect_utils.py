@@ -39,7 +39,9 @@ from .patterns import (
     CJK_CORRECTION_PATTERNS,
     MAX_CAPTURE_PROMPT_LENGTH,
     MAX_WEAK_PATTERN_LENGTH,
-    MIN_SHORT_CORRECTION_LENGTH,
+    SHORT_CORRECTION_MAX_LENGTH,
+    MID_MESSAGE_MAX_LENGTH,
+    LONG_MESSAGE_MAX_LENGTH,
     Detection,
     _NO_DETECTION,
     detect_patterns,
@@ -91,7 +93,8 @@ __all__ = [
     # patterns
     "EXPLICIT_PATTERNS", "POSITIVE_PATTERNS", "CORRECTION_PATTERNS",
     "GUARDRAIL_PATTERNS", "CJK_CORRECTION_PATTERNS", "MAX_CAPTURE_PROMPT_LENGTH",
-    "MAX_WEAK_PATTERN_LENGTH", "MIN_SHORT_CORRECTION_LENGTH", "Detection",
+    "MAX_WEAK_PATTERN_LENGTH", "SHORT_CORRECTION_MAX_LENGTH",
+    "MID_MESSAGE_MAX_LENGTH", "LONG_MESSAGE_MAX_LENGTH", "Detection",
     "_NO_DETECTION", "detect_patterns", "is_correction_candidate",
     "should_include_message", "_should_include_message",
     # queue
