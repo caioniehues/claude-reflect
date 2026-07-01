@@ -8,7 +8,7 @@ import re
 import os
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, NamedTuple
 
 # =============================================================================
 # Path utilities
@@ -778,14 +778,33 @@ FORWARD_PIVOT_PATTERNS = [
 ]
 
 
-def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
+class Detection(NamedTuple):
+    """Structured result of detect_patterns.
+
+    Index/unpack-compatible with the legacy 5-tuple
+    (type, patterns, confidence, sentiment, decay_days), so existing
+    ``a, b, c, d, e = detect_patterns(...)`` and ``result[0]`` call sites keep
+    working while new code can use field access.
+    """
+    type: Optional[str]
+    patterns: str
+    confidence: float
+    sentiment: str
+    decay_days: int
+
+
+# Sentinel for "no detection" — reused so every miss returns the same value.
+_NO_DETECTION = Detection(None, "", 0.0, "correction", 90)
+
+
+def detect_patterns(text: str) -> Detection:
     """
     Detect patterns in text and return classification.
 
     Returns:
-        Tuple of (type, matched_patterns, confidence, sentiment, decay_days)
+        A Detection(type, patterns, confidence, sentiment, decay_days).
         type: "explicit", "positive", "auto", "guardrail", or None
-        matched_patterns: Space-separated pattern names
+        patterns: Space-separated pattern names
         confidence: 0.0 to 1.0
         sentiment: "correction" or "positive"
         decay_days: Number of days until decay
@@ -796,29 +815,29 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     has_cjk = bool(re.search(r'[\u3000-\u9fff\uf900-\ufaff\uac00-\ud7af]', stripped))
     short_threshold = 2 if has_cjk else 4
     if len(stripped) <= short_threshold:
-        return (None, "", 0.0, "correction", 90)
+        return _NO_DETECTION
 
     # Check for explicit "remember:" - always highest priority
     for pattern, name, confidence, decay in EXPLICIT_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
-            return ("explicit", name, confidence, "correction", decay)
+            return Detection("explicit", name, confidence, "correction", decay)
 
     # Check for guardrail patterns - "don't do X unless" constraints
     # These are high-confidence corrections about unwanted behavior
     for pattern, name, confidence, decay in GUARDRAIL_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
-            return ("guardrail", name, confidence, "correction", decay)
+            return Detection("guardrail", name, confidence, "correction", decay)
 
     # Check for FALSE POSITIVE patterns - skip these messages
     for fp_pattern in FALSE_POSITIVE_PATTERNS:
         if re.search(fp_pattern, text, re.IGNORECASE):
-            return (None, "", 0.0, "correction", 90)
+            return _NO_DETECTION
 
     # Check for non-correction English phrases (before correction patterns)
     # Prevents "No problem", "Don't worry" etc. from being caught as corrections
     for nc_pattern in NON_CORRECTION_PHRASES:
         if re.search(nc_pattern, text, re.IGNORECASE):
-            return (None, "", 0.0, "correction", 90)
+            return _NO_DETECTION
 
     # Check for positive patterns
     matched_positive = []
@@ -834,8 +853,8 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
         # is a legitimate correction even when phrased as a task pivot.
         for fp_pattern in FORWARD_PIVOT_PATTERNS:
             if re.search(fp_pattern, text, re.IGNORECASE):
-                return (None, "", 0.0, "correction", 90)
-        return ("positive", " ".join(matched_positive), 0.70, "positive", 90)
+                return _NO_DETECTION
+        return Detection("positive", " ".join(matched_positive), 0.70, "positive", 90)
 
     # Skip long messages for weak patterns (likely task requests)
     text_length = len(text)
@@ -857,7 +876,7 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
             confidence = min(0.90, confidence + 0.10)
         elif text_length > 300:
             confidence = max(0.50, confidence - 0.15)
-        return ("auto", " ".join(matched_cjk), confidence, "correction", decay_days)
+        return Detection("auto", " ".join(matched_cjk), confidence, "correction", decay_days)
 
     # Check for English correction patterns
     matched_corrections = []
@@ -904,9 +923,9 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
         elif text_length > 150:
             confidence = max(0.55, confidence - 0.10)
 
-        return ("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
+        return Detection("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
 
-    return (None, "", 0.0, "correction", 90)
+    return _NO_DETECTION
 
 
 def create_queue_item(
