@@ -16,7 +16,7 @@ claude-reflect is a Claude Code plugin that implements a two-stage self-learning
 hooks/hooks.json                → Hook definitions (PreCompact, PostToolUse)
 scripts/                        → Python scripts for hooks and extraction
 scripts/dev.sh                  → Launch a live-plugin dev session (--plugin-dir)
-scripts/lib/                    → Shared utilities (reflect_utils.py)
+scripts/lib/                    → Shared utilities (paths/patterns/queue/memory/sessions; reflect_utils.py is a re-export shim)
 scripts/legacy/                 → Deprecated bash scripts (for reference)
 commands/*.md                   → Slash commands: /reflect, /reflect-skills, /skip-reflect, /view-queue
 skills/claude-reflect/SKILL.md  → Auto-loaded skill (context surfaced when relevant)
@@ -45,8 +45,13 @@ tests/                          → Test suite (pytest)
 
 ### Key Files
 
-- `scripts/lib/reflect_utils.py`: Shared utilities (paths, queue ops, regex detection, memory hierarchy discovery, auto memory, rule frontmatter parsing)
-- `scripts/lib/semantic_detector.py`: AI-powered semantic analysis via `claude -p`
+- `scripts/lib/reflect_utils.py`: Re-export shim preserving the historical `from lib.reflect_utils import …` surface (split into the focused modules below)
+- `scripts/lib/paths.py`: Path/config/sentinel utilities and timestamps
+- `scripts/lib/patterns.py`: Regex detection — `detect_patterns`, `is_correction_candidate`, `Detection`
+- `scripts/lib/queue.py`: Durable per-project queue I/O (atomic writes, `_QueueLock`, migration)
+- `scripts/lib/memory.py`: Memory-hierarchy discovery, auto memory, rule frontmatter parsing, routing suggestions
+- `scripts/lib/sessions.py`: Session-JSONL extraction and tool-error aggregation
+- `scripts/lib/semantic_detector.py`: AI-powered semantic analysis via `claude -p` (used by `--scan-history`/`--organize`)
 - `scripts/capture_learning.py`: Pattern detection (correction, positive, explicit markers) with confidence scoring
 - `scripts/check_learnings.py`: PreCompact hook that backs up queue before context compaction
 - `scripts/extract_session_learnings.py`: Extracts user messages from session JSONL files
@@ -111,26 +116,26 @@ auto-discovered by convention (no explicit paths in the manifest):
 
 ### Regex Patterns (Real-time)
 
-`scripts/lib/reflect_utils.py` defines pattern detection:
+`scripts/lib/patterns.py` defines pattern detection (recall-biased at capture per
+ADR-0001 — precision is judged inline during `/reflect`):
 - **Corrections**: "no, use X", "don't use", "stop using", "that's wrong", "actually", "use X not Y"
 - **Positive**: "perfect!", "exactly right", "great approach", "nailed it"
 - **Explicit**: "remember:" prefix (highest confidence)
 
-Confidence scores range 0.60-0.90 based on pattern strength and count.
+Confidence scores range 0.55-0.90 based on pattern strength and count.
 
-### Semantic AI Validation (During /reflect)
+### Precision (During /reflect)
 
-`scripts/lib/semantic_detector.py` provides AI-powered validation:
-- Uses `claude -p --output-format json` for semantic analysis
-- **Multi-language support** — works for any language, not just English
-- **Better accuracy** — filters out false positives from regex
-- **Cleaner learnings** — extracts concise, actionable statements
+Per [ADR-0001](docs/adr/0001-detection-recall-at-capture-precision-at-process.md),
+the **learning path judges precision inline**: the `/reflect` agent reads each
+queued item to present it and decides reusability in-context — no subprocess, no
+`claude -p`. This retired the semantic silent-bypass bug by construction (there is
+no subprocess left to be unavailable) and deleted `validate_queue_items`.
 
-Key functions:
-- `semantic_analyze(text)` — analyze single message
-- `validate_queue_items(items)` — batch validate queue items
-
-Fallback: If Claude CLI is unavailable, regex detection is used as fallback.
+`scripts/lib/semantic_detector.py` remains for the two out-of-scope flows only:
+- `validate_tool_errors(...)` — `--scan-history` tool-error classification
+- `detect_contradictions(...)` — `--organize` contradiction detection
+- `semantic_analyze(text)` — shared primitive (also used by `compare_detection.py`)
 
 ### Comparison Testing
 
