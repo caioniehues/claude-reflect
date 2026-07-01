@@ -11,14 +11,16 @@ claude-reflect is a Claude Code plugin that implements a two-stage self-learning
 ## Architecture
 
 ```
-.claude-plugin/plugin.json  → Plugin manifest, points to hooks
-hooks/hooks.json            → Hook definitions (PreCompact, PostToolUse)
-scripts/                    → Python scripts for hooks and extraction
-scripts/lib/                → Shared utilities (reflect_utils.py)
-scripts/legacy/             → Deprecated bash scripts (for reference)
-commands/*.md               → Skill definitions for /reflect, /reflect-skills, /skip-reflect, /view-queue
-SKILL.md                    → Context provided when plugin is invoked
-tests/                      → Test suite (pytest)
+.claude-plugin/plugin.json      → Plugin manifest
+.claude-plugin/marketplace.json → Self-hosted single-plugin marketplace (source: "./")
+hooks/hooks.json                → Hook definitions (PreCompact, PostToolUse)
+scripts/                        → Python scripts for hooks and extraction
+scripts/dev.sh                  → Launch a live-plugin dev session (--plugin-dir)
+scripts/lib/                    → Shared utilities (reflect_utils.py)
+scripts/legacy/                 → Deprecated bash scripts (for reference)
+commands/*.md                   → Slash commands: /reflect, /reflect-skills, /skip-reflect, /view-queue
+skills/claude-reflect/SKILL.md  → Auto-loaded skill (context surfaced when relevant)
+tests/                          → Test suite (pytest)
 ```
 
 ### Data Flow
@@ -72,12 +74,29 @@ python -m pytest tests/ -v
 echo "[]" > ~/.claude/learnings-queue.json
 ```
 
+### Local development (live editing)
+
+Load the plugin directly from this repo so edits take effect (no reinstall):
+
+```bash
+./scripts/dev.sh          # == claude --plugin-dir "$(pwd)"
+# then, after any edit, inside the session:
+/reload-plugins
+```
+
+`/plugin install` instead copies the plugin to `~/.claude/plugins/cache/` (a
+frozen snapshot — repo edits won't apply). See [DEVELOPMENT.md](DEVELOPMENT.md)
+for the full install-vs-dev breakdown.
+
 ## Plugin Structure
 
-The plugin registers via `.claude-plugin/plugin.json`:
+The plugin registers via `.claude-plugin/plugin.json`. All components are
+auto-discovered by convention (no explicit paths in the manifest):
 - Hooks are defined in `hooks/hooks.json`
-- Commands (skills) are markdown files in `commands/`
-- `SKILL.md` provides context when the plugin is active
+- Commands are markdown files in `commands/` (surfaced as `/reflect` etc.)
+- The skill lives at `skills/claude-reflect/SKILL.md` — auto-loaded and surfaced
+  to Claude when relevant. (A `SKILL.md` at the repo root is NOT discovered; it
+  must be under `skills/<name>/`.)
 
 ### Hook Events
 
@@ -195,3 +214,17 @@ Requires Python 3.6+.
 ## Releasing
 
 See [RELEASING.md](RELEASING.md) for version bump checklist and release process.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues on this fork (`caioniehues/claude-reflect`) via the `gh` CLI; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), created on first use. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
