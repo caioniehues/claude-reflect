@@ -1,6 +1,6 @@
 ---
 description: Reflect on session corrections and update CLAUDE.md (with human review)
-allowed-tools: Read, Edit, Write, Glob, Bash, Grep, AskUserQuestion, TodoWrite
+allowed-tools: Read, Edit, Write, Glob, Bash, Grep, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
 
 ## Arguments
@@ -79,370 +79,55 @@ ls ~/.claude/rules/*.md 2>/dev/null
 
 ## Your Task
 
-### MANDATORY: Initialize Task Tracking (Step 0)
+### Operating principle: surface, don't suppress
 
-**BEFORE starting any work**, use TodoWrite to create a task list for the entire workflow. This ensures no steps are skipped and provides visibility into progress.
+One rule governs every filtering decision in this workflow: **surface, don't
+suppress.** Capture is a wide recall net (ADR-0001); precision is your job here,
+in front of the user, never a silent drop. Concretely:
 
-**Why this is critical:**
-- The /reflect workflow has 10+ phases that must execute in order
-- Without tracking, Claude may skip steps or lose context
-- TodoWrite acts as a checkpoint system ensuring completeness
+- If extraction found *any* matches, present them — never conclude "0 learnings"
+  while raw matches or tool rejections exist unshown.
+- When in doubt, include it and let the user decide. A borderline item shown
+  costs one glance; a borderline item suppressed is lost.
+- `remember:` items and queue items are **never** filtered out — the user already
+  chose to capture them.
+- Tool rejections are high-signal corrections — always show them, even ones that
+  look task-specific.
 
-**Initialize with this task list (adjust based on arguments):**
+Later steps reference this principle rather than restating it.
 
-```
-TodoWrite tasks for /reflect:
-1. "Parse arguments and check flags" (--dry-run, --scan-history, etc.)
-2. "Load learnings queue from ~/.claude/learnings-queue.json"
-3. "Scan historical sessions" (if --scan-history)
-4. "Validate learnings with semantic analysis"
-5. "Filter by project context (global vs project-specific)"
-6. "Deduplicate similar learnings"
-7. "Check for duplicates in existing CLAUDE.md"
-8. "Present summary and get user decision"
-9. "Apply changes to CLAUDE.md/AGENTS.md"
-10. "Clear queue and confirm completion"
-```
+### Initialize Task Tracking
 
-**Workflow rules:**
-- **Mark in_progress BEFORE starting each step** - this signals what's happening
-- **Mark completed IMMEDIATELY after finishing** - don't batch updates
-- **Only ONE task should be in_progress at a time**
-- **Never skip a step** - if a step doesn't apply, mark it completed with a note
-- **If blocked or error occurs**, keep task as in_progress and create a new task for the blocker
+Before starting, use **TaskCreate** to register the workflow phases so none is
+skipped, and **TaskUpdate** each to `in_progress`/`completed` as you go (adjust
+to the arguments passed):
 
-**Example TodoWrite call at start:**
-```json
-{
-  "todos": [
-    {"content": "Parse arguments (--scan-history detected)", "status": "in_progress", "activeForm": "Parsing command arguments"},
-    {"content": "Load learnings queue", "status": "pending", "activeForm": "Loading queue from ~/.claude/learnings-queue.json"},
-    {"content": "Scan historical sessions", "status": "pending", "activeForm": "Scanning past sessions for corrections"},
-    {"content": "Validate with semantic analysis", "status": "pending", "activeForm": "Validating learnings semantically"},
-    {"content": "Filter by project context", "status": "pending", "activeForm": "Filtering global vs project learnings"},
-    {"content": "Deduplicate similar learnings", "status": "pending", "activeForm": "Removing duplicate learnings"},
-    {"content": "Check existing CLAUDE.md for duplicates", "status": "pending", "activeForm": "Checking for existing entries"},
-    {"content": "Present summary to user", "status": "pending", "activeForm": "Presenting learnings summary"},
-    {"content": "Apply changes to target files", "status": "pending", "activeForm": "Writing to CLAUDE.md/AGENTS.md"},
-    {"content": "Clear queue and confirm", "status": "pending", "activeForm": "Finalizing and clearing queue"}
-  ]
-}
-```
-
-**DO NOT PROCEED** to the next section until you have initialized the task list with TodoWrite.
+1. Parse arguments and check flags
+2. Load learnings queue
+3. Scan historical sessions (if `--scan-history`)
+4. Judge reusability inline (Step 1.5)
+5. Filter by project context
+6. Deduplicate similar learnings
+7. Check existing memory tiers for duplicates
+8. Present summary and get user decision
+9. Apply changes
+10. Clear queue and confirm
 
 ---
 
-### Handle --targets Argument
-
-**If user passed `--targets`:**
-
-Detect and display all AI assistant config files with **line counts** and **size warnings**.
-
-**Line Count Threshold:** 150 lines (research suggests frontier models handle ~150-200 instructions reliably)
-
-**Detection Steps:**
-
-1. Find all memory tier files using `find_claude_files()` (discovers CLAUDE.md, CLAUDE.local.md, rule files)
-2. Count lines in each file
-3. Check for auto memory directory
-4. Display with status indicator:
-   - `✓` = under 150 lines (healthy)
-   - `⚠️` = over 150 lines (consider cleanup)
-
-```python
-# Cross-platform line counting (works on Windows, macOS, Linux)
-from pathlib import Path
-
-def count_lines(filepath):
-    try:
-        return len(Path(filepath).expanduser().read_text().splitlines())
-    except:
-        return 0
-
-# Example usage
-count_lines("~/.claude/CLAUDE.md")
-count_lines("./CLAUDE.md")
-```
-
-**Display format:**
-```
-════════════════════════════════════════════════════════════
-MEMORY HIERARCHY — TARGET FILES
-════════════════════════════════════════════════════════════
-
-CLAUDE.md Files:
-  ~/.claude/CLAUDE.md (global)           42 lines  ✓
-  ./CLAUDE.md (project)                 156 lines  ⚠️
-  ./CLAUDE.local.md (personal)           12 lines  ✓
-  ./src/CLAUDE.md (subdirectory)         28 lines  ✓
-
-Rule Files:
-  ./.claude/rules/guardrails.md          8 lines  ✓
-  ./.claude/rules/coding-style.md       15 lines  ✓  [paths: src/]
-  ~/.claude/rules/model-preferences.md  10 lines  ✓
-
-Auto Memory:
-  ~/.claude/projects/.../memory/         3 files (general.md, tool-usage.md, workflow.md)
-
-Other:
-  AGENTS.md                              ✗ not found
-
-────────────────────────────────────────────────────────────
-⚠️  ./CLAUDE.md exceeds 150 lines
-    Tip: Run /reflect --dedupe to consolidate similar entries
-    Tip: Run /reflect --organize to redistribute entries across tiers
-────────────────────────────────────────────────────────────
-
-To create new targets:
-  touch AGENTS.md                    # Enable AGENTS.md sync
-  touch CLAUDE.local.md              # Personal learnings (gitignored)
-  mkdir -p .claude/rules             # Enable modular rule files
-
-════════════════════════════════════════════════════════════
-```
-
-**Logic:**
-- Show warning section only if ANY file exceeds 150 lines
-- List all files over threshold in the warning
-- Always suggest `--dedupe` and `--organize` as remediation
-- Show path-scoping info for rule files with `paths:` frontmatter
-
-Exit after showing targets (don't process learnings).
-
-### Handle --review Argument
-
-**If user passed `--review`:**
-
-Show learnings with their confidence and decay status:
-
-```bash
-cat ~/.claude/learnings-queue.json | jq -r '.[] | "\(.timestamp) | conf:\(.confidence // 0.5) | decay:\(.decay_days // 90)d | \(.message | .[0:60])"'
-```
-
-Display table of learnings with decay status:
-```
-═══════════════════════════════════════════════════════════
-LEARNINGS REVIEW — Confidence & Decay Status
-═══════════════════════════════════════════════════════════
-
-┌────┬──────────┬────────┬────────────────────────────────┐
-│ #  │ Conf.    │ Decay  │ Learning                       │
-├────┼──────────┼────────┼────────────────────────────────┤
-│ 1  │ 0.90 ✓   │ 120d   │ Use gpt-5.1 for reasoning     │
-│ 2  │ 0.60     │ 60d ⚠  │ Enable flag X for API calls   │
-│ 3  │ 0.40 ⚠   │ 30d ⚠  │ Consider using batch mode     │
-└────┴──────────┴────────┴────────────────────────────────┘
-
-Legend: ✓ High confidence  ⚠ Low confidence/Near decay
-═══════════════════════════════════════════════════════════
-```
-
-Exit after showing review (don't process learnings).
-
-### Handle --dedupe Argument
-
-**If user passed `--dedupe`:**
-
-Scan existing CLAUDE.md files for similar entries AND contradictions.
-
-**1. Read both CLAUDE.md files:**
-```bash
-cat ~/.claude/CLAUDE.md
-cat CLAUDE.md 2>/dev/null
-```
-
-**2. Extract all bullet points:**
-Look for lines starting with `- ` under section headers. Track line numbers.
-
-**3. Detect contradictions using semantic analysis:**
-
-Use the contradiction detector to find conflicting entries:
-```python
-from lib.semantic_detector import detect_contradictions
-
-# Collect all entries from both files
-entries = [...]  # List of bullet point strings
-
-contradictions = detect_contradictions(entries)
-# Returns: [{"entry1": "...", "entry2": "...", "conflict": "reason"}]
-```
-
-**4. Analyze for semantic similarity:**
-Group entries that:
-- Reference the same tool/model/concept
-- Give overlapping or redundant advice
-- Could be merged without losing information
-
-**5. Present findings:**
-
-```
-═══════════════════════════════════════════════════════════
-CLAUDE.MD DEDUPLICATION SCAN
-═══════════════════════════════════════════════════════════
-
-⚠️ CONTRADICTIONS FOUND (2)
-────────────────────────────────────────────────────────────
-
-#1: Conflicting indentation preferences
-    Line 12: "- Use tabs for indentation"
-    Line 78: "- Use spaces for indentation"
-    Conflict: opposite indentation preferences
-
-#2: Conflicting model recommendations
-    Line 24: "- Use gpt-5.1 for all tasks"
-    Line 89: "- Prefer Claude for reasoning tasks"
-    Conflict: different model preferences for similar tasks
-
-────────────────────────────────────────────────────────────
-
-SIMILAR ENTRIES (2 groups)
-────────────────────────────────────────────────────────────
-
-Group 1 (Global CLAUDE.md):
-  Line 45: "- Use gpt-5.1 for complex tasks"
-  Line 52: "- Prefer gpt-5.1 for reasoning"
-  → Proposed: "- Use gpt-5.1 for complex reasoning tasks"
-
-Group 2 (Project CLAUDE.md):
-  Line 12: "- Always use venv"
-  Line 28: "- Create virtual environment for Python"
-  → Proposed: "- Use venv for Python projects"
-
-────────────────────────────────────────────────────────────
-Unique entries: 23 (no changes needed)
-═══════════════════════════════════════════════════════════
-```
-
-**6. Handle contradictions with AskUserQuestion:**
-
-For each contradiction found:
-```json
-{
-  "questions": [{
-    "question": "Contradiction #1: 'Use tabs' vs 'Use spaces' - How to resolve?",
-    "header": "Conflict",
-    "multiSelect": false,
-    "options": [
-      {"label": "Keep first", "description": "Keep 'Use tabs for indentation' (line 12)"},
-      {"label": "Keep second", "description": "Keep 'Use spaces for indentation' (line 78)"},
-      {"label": "Merge", "description": "Create a combined entry that resolves the conflict"},
-      {"label": "Keep both", "description": "Leave both entries (they may apply to different contexts)"}
-    ]
-  }]
-}
-```
-
-**7. Handle similarity groups with AskUserQuestion:**
-```json
-{
-  "questions": [{
-    "question": "Apply deduplication to CLAUDE.md files?",
-    "header": "Dedupe",
-    "multiSelect": false,
-    "options": [
-      {"label": "Apply all consolidations", "description": "Merge 2 groups, remove 4 redundant lines"},
-      {"label": "Review each group", "description": "Decide per group"},
-      {"label": "Cancel", "description": "Keep files unchanged"}
-    ]
-  }]
-}
-```
-
-**8. Apply changes:**
-- Use Edit tool to resolve contradictions based on user choices
-- Replace redundant entries with consolidated versions
-- Remove duplicate lines
-- Preserve section structure
-
-Exit after deduplication (don't process queue).
-
-### Handle --organize Argument
-
-**If user passed `--organize`:**
-
-Analyze the full memory hierarchy and suggest reorganization to reduce clutter and improve routing.
-
-**1. Inventory all memory locations:**
-
-```python
-from scripts.lib.reflect_utils import find_claude_files, read_auto_memory, read_all_memory_entries
-
-files = find_claude_files()
-auto_memory = read_auto_memory()
-all_entries = read_all_memory_entries()
-```
-
-Count lines, entries, and files for each tier.
-
-**2. Detect issues:**
-
-| Issue | Detection | Fix |
-|-------|-----------|-----|
-| Overgrown file (>150 lines) | Line count check | Split into rule files or subdirectory CLAUDE.md |
-| Wrong-tier entries | Global-looking entries in project file or vice versa | Move to correct tier |
-| Scattered topics | Same topic (e.g., model preferences) across multiple files | Consolidate into rule file |
-| Path-scoping opportunities | Entries mentioning specific directories | Create path-scoped rule files |
-| Auto memory promotion candidates | Confirmed patterns in auto memory | Promote to CLAUDE.md |
-| Cross-tier duplicates | Same entry in multiple tiers | Remove duplicates |
-
-**3. Present findings:**
-
-```
-════════════════════════════════════════════════════════════
-MEMORY HIERARCHY ANALYSIS
-════════════════════════════════════════════════════════════
-
-Current state:
-  ~/.claude/CLAUDE.md          182 lines  ⚠️ (over 150)
-  ./CLAUDE.md                   95 lines  ✓
-  .claude/rules/                 0 files
-  Auto memory                    2 files
-
-Issues found: 4
-────────────────────────────────────────────────────────────
-
-#1 OVERGROWN: ~/.claude/CLAUDE.md (182 lines)
-   → Suggestion: Extract model preferences to ~/.claude/rules/model-preferences.md
-   → Suggestion: Extract guardrails to .claude/rules/guardrails.md
-
-#2 WRONG TIER: 3 global-looking entries in ./CLAUDE.md
-   → "Always use venv" — should be in ~/.claude/CLAUDE.md
-   → "Never use force push" — should be in ~/.claude/CLAUDE.md
-
-#3 PROMOTION: 2 auto memory entries confirmed across sessions
-   → "Use batch mode for API calls" — promote to ./CLAUDE.md
-
-#4 DUPLICATE: 1 entry found in multiple tiers
-   → "Use gpt-5.1 for reasoning" in both ~/.claude/CLAUDE.md and auto memory
-
-════════════════════════════════════════════════════════════
-```
-
-**4. Get user approval per fix:**
-
-Use AskUserQuestion for each proposed reorganization:
-```json
-{
-  "questions": [{
-    "question": "Apply reorganization #1: Extract model preferences to rule file?",
-    "header": "Organize",
-    "multiSelect": false,
-    "options": [
-      {"label": "Yes, extract (Recommended)", "description": "Move 12 model entries to ~/.claude/rules/model-preferences.md"},
-      {"label": "Skip", "description": "Leave entries in current location"}
-    ]
-  }]
-}
-```
-
-**5. Apply reorganization:**
-- Use Edit tool to move content between files
-- Create new rule files as needed
-- Remove duplicates from source files
-- Preserve section structure in all files
-
-**6. Exit after reorganization (don't process queue).**
+### Handle Flag Arguments (early-exit branches)
+
+Some flags short-circuit the normal workflow. If the user passed one, read the
+matching reference file, follow it, then exit **without processing the queue**:
+
+| Flag | Reference file (read on demand) |
+|------|----------------------------------|
+| `--targets` | `${CLAUDE_PLUGIN_ROOT}/commands/reflect/targets.md` |
+| `--review` | `${CLAUDE_PLUGIN_ROOT}/commands/reflect/review.md` |
+| `--dedupe` | `${CLAUDE_PLUGIN_ROOT}/commands/reflect/dedupe.md` |
+| `--organize` | `${CLAUDE_PLUGIN_ROOT}/commands/reflect/organize.md` |
+
+`--scan-history` does NOT exit early — it feeds the normal workflow (see Step 0.5).
 
 ### First-Run Detection (Per-Project)
 
@@ -495,243 +180,10 @@ If user chooses "Yes, scan history", proceed as if `--scan-history` was passed.
 
 ### Step 0.5: Historical Scan (only with --scan-history)
 
-Scan past sessions for corrections missed by hooks. Useful for:
-- First-time /reflect installation (cold start)
-- Periodic deep review of past learnings
-
-**0.5a. Find ALL session files for this project:**
-
-1. First, list project folders to find the correct path pattern:
-   ```bash
-   ls ~/.claude/projects/ | grep -i "$(basename $(pwd))"
-   ```
-
-2. **Handle underscores vs hyphens:** Directory names may use underscores (`darwin_new`) but encoded paths use hyphens (`darwin-new`). If first grep fails, try replacing underscores:
-   ```bash
-   # If no match, try with hyphens instead of underscores
-   ls ~/.claude/projects/ | grep -i "$(basename $(pwd) | tr '_' '-')"
-   ```
-
-3. Then list ALL session files in that folder:
-   ```bash
-   ls ~/.claude/projects/[PROJECT_FOLDER]/*.jsonl
-   ```
-
-Note: Project paths have `/` replaced with `-`. For `/Users/bob/code/myapp`, look for `-Users-bob-code-myapp`.
-
-**IMPORTANT**: With `--scan-history`, process ALL session files (not just recent ones). This includes:
-- Main session files (UUID format like `fa5ae539-d170-4fa8-a8d2-bf50b3ec2861.jsonl`)
-- Agent files (`agent-*.jsonl`) - these may contain corrections too
-- Apply `--days N` filter by checking file modification times if specified
-
-**0.5b. Extract corrections from session files:**
-
-Session files are JSONL. Use jq to extract user messages, then grep for patterns.
-
-**CRITICAL**: Filter out command expansion messages using `isMeta != true`. Command expansions (like /reflect itself) are stored with `isMeta: true` and contain documentation text that would cause false positives.
-
-**DYNAMIC PATTERN SELECTION**: Before running grep, sample a few user messages to detect the conversation language. If non-English, adapt the patterns accordingly:
-
-| Language | Example patterns to add |
-|----------|------------------------|
-| Russian | `нет,? используй\|не используй\|на самом деле\|запомни:\|лучше\|предпочитаю` |
-| Spanish | `no,? usa\|no uses\|en realidad\|recuerda:\|prefiero\|siempre usa` |
-| German | `nein,? verwende\|nicht verwenden\|eigentlich\|merke:\|bevorzuge\|immer` |
-
-Generate appropriate patterns for the detected language and combine with English patterns.
-
-**Default English patterns:** `remember:`, `no, use`, `don't use`, `actually`, `stop using`, `never use`, `that's wrong`, `I meant`, `use X not Y`
-
-For each `.jsonl` file in the project folder, extract user messages that match correction patterns. Use your judgment on the best extraction method - you can use Read, Grep, Bash with jq, or any combination that works.
-
-**What to extract:**
-1. **User messages** with correction patterns (from `type: "user"` entries with `isMeta != true`)
-2. **Tool rejections** - look for `toolUseResult` fields containing "user said:" followed by feedback text
-   - "user said:" followed by empty content means rejection without feedback - skip these
-
-**Key file structure:**
-- Session files: `~/.claude/projects/[PROJECT_FOLDER]/*.jsonl`
-- User messages: `{"type": "user", "message": {"content": [{"type": "text", "text": "..."}]}}`
-- Tool rejections: `{"toolUseResult": "The user doesn't want to proceed\nuser said:\n[feedback]"}`
-
-**0.5b-extra. Tool rejections are HIGH confidence:**
-
-When a user stops a tool and provides feedback, this is a strong correction signal. The feedback appears after "user said:" (may be on the next line in the JSON).
-
-**CRITICAL: Tool rejections MUST be shown to user:**
-- Even if you think they're "task-specific", present them
-- The user will decide if they're reusable
-- Count how many you found and report: "Found N tool rejections"
-- Never say "analyzed N rejections, none reusable" without showing them
-
-**0.5c. Apply date filter if `--days N` specified:**
-- Check file modification time
-- Skip files older than N days
-
-**0.5d. Semantic Validation (Enhanced LLM Filter):**
-
-For each extracted correction, use semantic analysis to determine if it's a REUSABLE learning.
-
-**Preferred: Use semantic detector for accuracy:**
-```python
-# scripts/lib/semantic_detector.py
-from lib.semantic_detector import semantic_analyze
-
-result = semantic_analyze(message)
-# Returns: is_learning, type, confidence, reasoning, extracted_learning
-```
-
-Benefits of semantic analysis:
-- Works for ANY language (not just English patterns)
-- Provides cleaner `extracted_learning` for CLAUDE.md
-- More accurate confidence scores
-- Explains reasoning for each classification
-
-If semantic analysis is unavailable (timeout, CLI error), fall back to heuristic rules:
-
-**CRITICAL RULES:**
-1. **NEVER filter out `remember:` items** - these are explicit user requests, always present them
-2. **NEVER filter out queue items** - the user explicitly captured these via hooks
-3. **When in doubt, INCLUDE the learning and let user decide** - don't auto-reject borderline cases
-4. **If extraction found matches, SHOW THEM** - never conclude "0 learnings" without presenting raw matches to user
-5. **Tool rejections = ALWAYS SHOW** - even "task-specific" ones might have reusable elements
-
-**REJECT ONLY if clearly:**
-- A question (ends with "?")
-- Pure task confirmation ("yes", "ok", "done", "looks good")
-- Too vague to extract meaning ("fix it", "wrong")
-
-**ACCEPT if it mentions:**
-- Tool/technology/API names or parameters
-- Flags, settings, or configuration options ("enable X", "use flag Y")
-- Best practices or patterns ("always do X", "don't do Y")
-- Model names or versions
-- Rate limits, delays, or timing
-- File paths or environment setup
-
-**TRUST USER CORRECTIONS**: For model names, API versions, tool availability, and flag/parameter values - the user has more current knowledge than Claude's training data. Do NOT try to validate whether something "exists" or is "correct". Accept user corrections as authoritative.
-
-**BORDERLINE → Get context first:**
-If a correction seems context-specific (like "please enable that flag"), search for surrounding messages to understand WHAT flag/parameter. Often these ARE reusable learnings about API parameters.
-
-```bash
-# Get context around a correction (find line number, then show surrounding)
-grep -n "enable that flag" "$SESSION_FILE" | head -1
-```
-
-For each ACCEPTED correction, create:
-1. An actionable learning in imperative form (e.g., "Use gpt-5.1 for reasoning tasks" or "Enable flag X for better results")
-2. Suggested scope: "global" or "project"
-3. Include the actual parameter/value when possible
-
-**0.5e. Deduplicate:**
-- Collect all accepted corrections
-- Remove exact duplicates
-- For similar corrections, keep the most recent
-
-**0.5f. Build working list:**
-- ADD history scan results to working list (alongside any queue items from Step 1)
-- Use the actionable learning you created as the proposed entry
-- Use the scope suggestion (global/project) as default
-- Mark source as "history-scan" or "tool-rejection"
-
-**SANITY CHECK before proceeding:**
-- Verify queue items from Step 1 are still in working list
-- If queue had N items, working list must have at least N items
-- If working list is empty but queue was NOT empty → BUG, re-add queue items
-
-**MANDATORY PRESENTATION RULE:**
-If your extraction (grep, search, jq) found ANY matches:
-1. You MUST present them to the user - do NOT auto-conclude "0 learnings"
-2. Show at least the top 10-15 raw matches for user review
-3. For each match, propose: keep as learning OR skip
-4. Let the USER decide what's reusable, not the LLM
-
-**Format for presenting raw matches:**
-```
-═══════════════════════════════════════════════════════════
-RAW MATCHES FOUND — [N] items need review
-═══════════════════════════════════════════════════════════
-
-#1 [source: session-scan | tool-rejection]
-   "[raw text from extraction]"
-   → Proposed: [actionable learning] | Scope: [global/project]
-
-#2 ...
-═══════════════════════════════════════════════════════════
-```
-
-Then use AskUserQuestion to let user select which to keep.
-
-**NEVER conclude "0 learnings found" if:**
-- Grep/search returned >0 matches
-- Tool rejections were found but not shown
-- You filtered items without user review
-
-**0.5g. Extract Tool Execution Errors (Project-Specific Only):**
-
-Scan session files for REPEATED tool execution errors that reveal project-specific context.
-
-**What to extract:**
-Tool execution errors (`is_error: true`) that indicate project-specific issues:
-- Connection errors → Check .env for service URLs
-- Module not found → Project structure/import conventions
-- Environment undefined → Load .env file first
-- Service-specific errors (Supabase, Postgres, Redis) → Check config
-
-**What to EXCLUDE:**
-- Claude Code guardrails ("File has not been read yet", "exceeds max tokens")
-- Global Claude behavior (bash quoting, EISDIR directory confusion)
-- One-off errors (only include patterns with 2+ occurrences)
-
-**Use the extraction script:**
-```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/extract_tool_errors.py" --project "$(pwd)" --min-count 2 --json
-```
-
-Or use the utility functions directly:
-```python
-from lib.reflect_utils import extract_tool_errors, aggregate_tool_errors
-
-# Extract from session files
-errors = []
-for session_file in session_files:
-    errors.extend(extract_tool_errors(session_file, project_specific_only=True))
-
-# Aggregate by pattern (only keep 2+ occurrences)
-aggregated = aggregate_tool_errors(errors, min_occurrences=2)
-```
-
-**Semantic validation (optional):**
-```python
-from lib.semantic_detector import validate_tool_errors
-validated = validate_tool_errors(aggregated)
-```
-
-**Add validated error patterns to working list:**
-- Mark source as "tool-error"
-- Use `suggested_guideline` or `refined_guideline` as the proposed entry
-- Set scope to "project" (these are project-specific patterns)
-
-**Example output:**
-```
-═══════════════════════════════════════════════════════════
-TOOL ERROR PATTERNS — [N] project-specific issues found
-═══════════════════════════════════════════════════════════
-
-#1 [connection_refused] — 5 occurrences
-   Sample: "Connection refused to localhost:5432"
-   → Proposed: "Check DATABASE_URL in .env for PostgreSQL connection"
-
-#2 [env_undefined] — 3 occurrences
-   Sample: "SUPABASE_URL is not defined"
-   → Proposed: "Load .env file before accessing environment variables"
-═══════════════════════════════════════════════════════════
-```
-
-If tool error patterns are found, add them to the working list alongside user corrections.
-
-- Continue to Step 3 (Project-Aware Filtering) with COMBINED list (queue + history + tool-errors)
+Only when `--scan-history` was passed (or the first-run offer was accepted): read
+`${CLAUDE_PLUGIN_ROOT}/commands/reflect/scan-history.md` and follow it to scan
+past sessions for missed corrections and tool-error patterns. It ADDS results to
+the working list; continue to Step 3 with the combined list.
 
 ### Step 1: Load and Validate
 - Read the queue from `~/.claude/learnings-queue.json`
@@ -861,20 +313,14 @@ Search the current session file for user messages matching correction patterns. 
 - Model names, API patterns, tool usage mistakes, project conventions?
 - Implicit corrections (e.g., "Actually, the API returns...")
 
-**2e. Semantic Validation (LLM Filter):**
+**2e. Judge reusability inline:**
 
-If there are extracted corrections from 2b or 2c, use semantic analysis for accurate classification:
-
-```python
-from lib.semantic_detector import semantic_analyze
-result = semantic_analyze(message)
-# Use result["is_learning"], result["extracted_learning"], result["confidence"]
-```
-
-If semantic analysis is unavailable, fall back to heuristic evaluation:
-- REJECT questions, one-time tasks, context-specific items, vague feedback
+Judge corrections from 2b/2c the same way as Step 1.5 and Step 0.5d — inline, no
+subprocess — under **surface, don't suppress**:
+- REJECT only questions, one-time tasks, context-specific items, vague feedback
 - ACCEPT tool recommendations, patterns, conventions, model corrections
-- Create actionable learnings in imperative form with scope suggestions
+- Write each accepted item as an actionable learning in imperative form, with a
+  scope suggestion
 
 **2f. Add findings to working list:**
 For each ACCEPTED learning:

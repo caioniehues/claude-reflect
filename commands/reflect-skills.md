@@ -1,6 +1,6 @@
 ---
 description: Discover skill candidates from repeating session patterns
-allowed-tools: Read, Write, Bash, Glob, Grep, AskUserQuestion, TodoWrite
+allowed-tools: Read, Write, Bash, Glob, Grep, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
 
 ## Arguments
@@ -40,23 +40,10 @@ These are the **same pattern** despite different wording.
 
 ### Step 1: Initialize Task Tracking
 
-**REQUIRED:** Use TodoWrite immediately to show progress. Update after each step.
-
-```json
-{
-  "todos": [
-    {"content": "Parse arguments", "status": "in_progress", "activeForm": "Parsing command arguments"},
-    {"content": "Gather session data", "status": "pending", "activeForm": "Reading session files"},
-    {"content": "Check existing commands", "status": "pending", "activeForm": "Checking existing commands"},
-    {"content": "Analyze for patterns", "status": "pending", "activeForm": "Analyzing sessions for patterns"},
-    {"content": "Propose skill candidates", "status": "pending", "activeForm": "Proposing skill candidates"},
-    {"content": "Assign skills to projects", "status": "pending", "activeForm": "Assigning skills to projects"},
-    {"content": "Get user approval", "status": "pending", "activeForm": "Getting user approval"},
-    {"content": "Generate skill files", "status": "pending", "activeForm": "Generating skill files"},
-    {"content": "Validate skills", "status": "pending", "activeForm": "Validating generated skills"}
-  ]
-}
-```
+Use **TaskCreate** to register the workflow phases and **TaskUpdate** each as you
+go, so none is skipped: parse arguments → gather session data → check existing
+commands → analyze for patterns → propose skill candidates → assign to projects →
+get user approval → generate skill files → validate.
 
 ### Step 2: Parse Arguments
 
