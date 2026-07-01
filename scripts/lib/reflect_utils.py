@@ -669,11 +669,16 @@ POSITIVE_PATTERNS = [
 # Correction patterns (conservative set to minimize false positives)
 # Format: (regex_pattern, pattern_name, is_strong)
 #
-# DESIGN NOTES:
-# - These patterns are English-centric as a FAST first-pass filter
-# - Non-English corrections are caught by semantic filtering during /reflect
-# - We use STRUCTURAL signals (length, questions, task requests) for language-agnostic filtering
-# - Users can use explicit markers like "remember:" in any language
+# DESIGN NOTES (ADR-0001 — recall at capture, precision at /reflect):
+# - Capture is a wide RECALL net. These openers over-capture on purpose; the
+#   /reflect agent judges reusability inline, where a wrong call costs one glance.
+# - No capture-time precision tables (FALSE_POSITIVE / NON_CORRECTION /
+#   FORWARD_PIVOT) and no subprocess semantic pass — a precision miss here would
+#   be a permanent, unreviewable drop, which the product promise forbids.
+# - Non-English corrections: CJK recall openers below + explicit "remember:" in
+#   any language; finer language precision is the inline /reflect judgment's job.
+# - The only capture-time filters are cheap structural guards: the length cap and
+#   should_include_message (drops system content, not user intent).
 #
 CORRECTION_PATTERNS = [
     (r"^no[,. ]+", "no,", True),  # Starts with "no," - common correction opener
@@ -698,33 +703,6 @@ GUARDRAIL_PATTERNS = [
     (r"leave .{1,30} (?:alone|unchanged|as is)", "leave-alone", 0.85, 90),
     (r"don't (?:add|include) (?:comments|docstrings|type hints|annotations) (?:unless|to code)", "dont-add-annotations", 0.85, 90),
     (r"(?:minimal|minimum|only necessary) changes", "minimal-changes", 0.80, 90),
-]
-
-# Structural patterns indicating FALSE POSITIVES (language-agnostic)
-# These focus on MESSAGE STRUCTURE rather than specific words
-FALSE_POSITIVE_PATTERNS = [
-    r"[?\uff1f]$",  # Ends with question mark (ASCII ? or full-width ？)
-    r"[\u55ce\u5417\u5462\u304b\uae4c]$",  # Ends with CJK question particle (嗎吗呢か까)
-    r"^(please|can you|could you|would you|help me)\b",  # Task request openers
-    r"(help|fix|check|review|figure out|set up)\s+(this|that|it|the)\b",  # Task verbs
-    r"(error|failed|could not|cannot|can't|unable to)\s+\w+",  # Error descriptions
-    r"(is|was|are|were)\s+(not|broken|failing)",  # Bug reports
-    r"^I (need|want|would like)\b",  # Task requests
-    r"^(ok|okay|alright)[,.]?\s+(so|now|let)",  # Task continuations
-]
-
-# English phrases that look like correction openers but are NOT corrections
-# Especially important for CJK-mixed text where these appear naturally
-NON_CORRECTION_PHRASES = [
-    r"^no\s+problem",        # "No problem" - agreement
-    r"^no\s+worries",        # "No worries" - agreement
-    r"^no\s+need\b",         # "No need" - acknowledgment
-    r"^no\s+way\b",          # "No way!" - surprise/exclamation
-    r"^don't\s+worry",       # "Don't worry" - reassurance
-    r"^don't\s+mind",        # "Don't mind" - agreement
-    r"^don't\s+bother",      # "Don't bother" - polite decline
-    r"^never\s+mind",        # "Never mind" - dismissal
-    r"^stop\s+worrying",     # "Stop worrying" - reassurance
 ]
 
 # CJK correction patterns (parallel to English CORRECTION_PATTERNS)
@@ -760,22 +738,6 @@ MAX_WEAK_PATTERN_LENGTH = 150
 
 # Very short messages without question marks are more likely corrections
 MIN_SHORT_CORRECTION_LENGTH = 80
-
-# Forward-pivot patterns — phrases indicating the message body is a task
-# instruction following a positive-feedback opener, NOT retrospective feedback.
-# "Perfect! Now let's add X" is structurally a task pivot, not validation of past
-# work. Applied ONLY to positive-pattern matches; real corrections (e.g. "Now
-# let's stop refactoring") still get captured by CORRECTION_PATTERNS since those
-# signals are directive-as-content, not directive-as-followup.
-#
-# Distinct from FALSE_POSITIVE_PATTERNS (apply to all detections) and
-# NON_CORRECTION_PHRASES (neutralize correction openers like "no problem").
-FORWARD_PIVOT_PATTERNS = [
-    r"\b(now|next)[, ]+(let'?s|we|i)\b",        # "Now let's", "Next, we", "Now I"
-    r"\blet'?s (add|do|build|move|update|change|fix|implement)\b",
-    r"\b(go ahead and|can you|could you|please)\b",
-    r"\bwe need to\b",
-]
 
 
 class Detection(NamedTuple):
@@ -828,17 +790,6 @@ def detect_patterns(text: str) -> Detection:
         if re.search(pattern, text, re.IGNORECASE):
             return Detection("guardrail", name, confidence, "correction", decay)
 
-    # Check for FALSE POSITIVE patterns - skip these messages
-    for fp_pattern in FALSE_POSITIVE_PATTERNS:
-        if re.search(fp_pattern, text, re.IGNORECASE):
-            return _NO_DETECTION
-
-    # Check for non-correction English phrases (before correction patterns)
-    # Prevents "No problem", "Don't worry" etc. from being caught as corrections
-    for nc_pattern in NON_CORRECTION_PHRASES:
-        if re.search(nc_pattern, text, re.IGNORECASE):
-            return _NO_DETECTION
-
     # Check for positive patterns
     matched_positive = []
     for pattern, name, confidence, decay in POSITIVE_PATTERNS:
@@ -846,14 +797,6 @@ def detect_patterns(text: str) -> Detection:
             matched_positive.append(name)
 
     if matched_positive:
-        # Forward-pivot guard — "Perfect! Now let's add X" matches a positive
-        # pattern but the body is a fresh task instruction, not retrospective
-        # feedback. Reject so task pivots don't pollute the queue (never reusable
-        # learnings). Applied ONLY here, not to corrections — "Now let's stop X"
-        # is a legitimate correction even when phrased as a task pivot.
-        for fp_pattern in FORWARD_PIVOT_PATTERNS:
-            if re.search(fp_pattern, text, re.IGNORECASE):
-                return _NO_DETECTION
         return Detection("positive", " ".join(matched_positive), 0.70, "positive", 90)
 
     # Skip long messages for weak patterns (likely task requests)
@@ -926,6 +869,18 @@ def detect_patterns(text: str) -> Detection:
         return Detection("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
 
     return _NO_DETECTION
+
+
+def is_correction_candidate(text: str) -> bool:
+    """Recall predicate: does this message carry a correction signal?
+
+    The single source of truth shared by live capture and ``--corrections-only``
+    session extraction, so the two paths cannot diverge (ADR-0001). Delegates to
+    detect_patterns, so every correction/guardrail/explicit opener — English or
+    CJK — counts, and positive-only feedback does not.
+    """
+    detection = detect_patterns(text)
+    return detection.type is not None and detection.sentiment == "correction"
 
 
 def create_queue_item(
@@ -1008,13 +963,7 @@ def extract_user_messages(session_file: Path, corrections_only: bool = False) ->
         return []
 
     if corrections_only:
-        # Filter for correction patterns
-        correction_pattern = (
-            r"(no,? use|don't use|stop using|never use|that's wrong|that's incorrect|"
-            r"not right|not correct|actually[,. ]|I meant|I said|I told you|"
-            r"I already told|you should use|you need to use|use .+ not|not .+, use|remember:)"
-        )
-        messages = [m for m in messages if re.search(correction_pattern, m, re.IGNORECASE)]
+        messages = [m for m in messages if is_correction_candidate(m)]
 
     return messages
 

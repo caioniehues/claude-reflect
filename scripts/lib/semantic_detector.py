@@ -183,62 +183,6 @@ def _validate_response(content: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def validate_queue_items(
-    items: list,
-    timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
-    """
-    Validate a list of queue items using semantic analysis.
-
-    Items that fail semantic validation are filtered out.
-    Items that pass have their confidence updated.
-
-    Args:
-        items: List of queue items from learnings-queue.json
-        timeout: Timeout per item
-        model: Optional model override
-
-    Returns:
-        Filtered and enhanced list of queue items
-    """
-    validated = []
-
-    for item in items:
-        message = item.get("message", "")
-        if not message:
-            continue
-
-        # Run semantic analysis
-        result = semantic_analyze(message, timeout=timeout, model=model)
-
-        if result is None:
-            # Fallback: keep original item if semantic fails
-            validated.append(item)
-            continue
-
-        if not result.get("is_learning"):
-            # Semantic says it's not a learning - filter out
-            continue
-
-        # Merge semantic analysis into item
-        enhanced = {**item}
-        enhanced["semantic_confidence"] = result["confidence"]
-        enhanced["semantic_type"] = result["type"]
-        enhanced["semantic_reasoning"] = result["reasoning"]
-
-        if result.get("extracted_learning"):
-            enhanced["extracted_learning"] = result["extracted_learning"]
-
-        # Update confidence to be the higher of regex and semantic
-        original_confidence = item.get("confidence", 0.6)
-        enhanced["confidence"] = max(original_confidence, result["confidence"])
-
-        validated.append(enhanced)
-
-    return validated
-
-
 # =============================================================================
 # Tool error validation
 # =============================================================================

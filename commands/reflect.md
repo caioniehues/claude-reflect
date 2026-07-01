@@ -739,65 +739,46 @@ If tool error patterns are found, add them to the working list alongside user co
 - **IMPORTANT**: Even if queue is empty, continue if `--scan-history` will add items
 - Only exit early if: queue is empty AND not doing history scan AND user declines manual capture
 
-### Step 1.5: Semantic Validation (Queue Items)
+### Step 1.5: Judge Reusability Inline (Queue Items)
 
-After loading queue items, validate them using AI-powered semantic analysis. This provides:
-- **Multi-language support** — understands corrections in any language, not just English patterns
-- **Better accuracy** — filters out false positives from regex detection
-- **Cleaner learnings** — extracts concise, actionable statements for CLAUDE.md
+Capture is a wide **recall** net (ADR-0001): the queue over-captures on purpose,
+so a real correction is never permanently dropped in an always-on hook where a
+miss is unreviewable. Precision lives **here**, judged inline by you as you read
+each item to present it — no subprocess, no `claude -p`, no separate pass. You
+are already the smartest model in the loop; a second Claude judging what you're
+about to show the user is redundant.
 
-**1.5a. Run semantic analysis on each queue item:**
+**1.5a. For each queued item, judge whether it is a reusable learning.**
 
-Use the semantic detector (via `claude -p`) to analyze each queued message:
+Read `item["message"]` and decide, in one pass, in any language:
+- **Keep** if it expresses a durable preference, correction, or guardrail that
+  should shape future behavior (e.g. "use pnpm not npm", "don't add docstrings
+  unless asked", "remember: deploy from staging first").
+- **Drop** if it is transient chatter with no reusable signal — a greeting, a
+  one-off question, agreement ("no problem"), or a task instruction that only
+  applied to that moment ("perfect! now add the column"). Dropping here is safe:
+  it is a reviewed, in-session call, not a silent capture-time deletion.
 
-```python
-# scripts/lib/semantic_detector.py provides:
-from lib.semantic_detector import validate_queue_items
+For kept items, write a concise, actionable `extracted_learning` (the clean
+statement that would go into a memory file) and note its type
+(correction / positive / explicit / guardrail).
 
-# For each item, semantic analysis returns:
-# {
-#   "is_learning": bool,           # Should this be kept?
-#   "type": "correction"|"positive"|"explicit"|null,
-#   "confidence": 0.0-1.0,         # AI's confidence score
-#   "reasoning": str,              # Why it was classified this way
-#   "extracted_learning": str      # Clean, actionable statement
-# }
-```
+**1.5b. `remember:` items are ALWAYS kept** — explicit user requests are never
+dropped, regardless of your reusability judgment.
 
-**1.5b. Filter and enhance queue items:**
-
-For each queue item:
-1. Call semantic analysis on `item["message"]`
-2. If `is_learning == false` → remove from working list (not a reusable learning)
-3. If `is_learning == true`:
-   - Update confidence: `max(original_confidence, semantic_confidence)`
-   - Add `extracted_learning` for cleaner CLAUDE.md entries
-   - Add `semantic_type` to preserve classification
-
-**1.5c. Fallback behavior:**
-
-If semantic analysis fails (timeout, Claude CLI not available, API error):
-- **Keep the original item** with its regex-based classification
-- Log: "Semantic validation unavailable, using pattern-based detection"
-- Proceed normally with regex confidence scores
-
-**1.5d. Report filtering results:**
-
-Show what was filtered:
+**1.5c. Report what you dropped**, so the user can catch a bad call:
 ```
 ═══════════════════════════════════════════════════════════
-SEMANTIC VALIDATION — [N] items analyzed
+INLINE REVIEW — [N] queued items
 ═══════════════════════════════════════════════════════════
-  ✓ [M] confirmed as learnings
-  ✗ [K] filtered (not reusable learnings)
+  ✓ [M] kept as learnings
+  ✗ [K] dropped (no reusable signal)
 
-Filtered items (skipped):
-  - "Hello, how are you?" — [greeting, not a learning]
-  - "Can you help me?" — [question, not a learning]
+Dropped:
+  - "Hello, how are you?" — greeting
+  - "perfect! now add the column" — one-off task instruction
 ═══════════════════════════════════════════════════════════
 ```
-
-**NOTE**: `remember:` items are ALWAYS kept regardless of semantic analysis — explicit user requests are never filtered.
 
 ### Step 1.6: Auto Memory Enrichment
 
@@ -815,7 +796,7 @@ If auto memory entries exist, scan for patterns that appear in multiple topic fi
 
 **1.6b. Route low-confidence queue items to auto memory:**
 
-For items with confidence 0.60-0.74 that passed semantic validation:
+For items with confidence 0.60-0.74 that you judged reusable inline (Step 1.5):
 - Offer auto memory as a destination instead of CLAUDE.md
 - Auto memory is a "staging area" — items can be promoted later via `/reflect --organize`
 

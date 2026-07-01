@@ -289,33 +289,30 @@ class TestPatternDetection(unittest.TestCase):
         self.assertIsNone(item_type)
         self.assertEqual(patterns, "")
 
-    def test_false_positive_question_rejected(self):
-        """Test that questions (ending with ?) are rejected."""
+    # --- No recall signal (ADR-0001) ---
+    # After the FALSE_POSITIVE_PATTERNS table was retired, these are not
+    # captured simply because they carry no recall signal (no correction opener,
+    # marker, or positive phrase) — not because a structural filter rejects them.
+
+    def test_question_no_recall_signal(self):
+        """A bare question carries no recall signal, so it is not captured."""
         result = detect_patterns("can you figure out how to make this fit?")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_task_request_rejected(self):
-        """Test that task requests are rejected."""
+    def test_task_request_no_recall_signal(self):
+        """A task request with no correction opener is not captured."""
         result = detect_patterns("please help me fix this issue")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_error_description_rejected(self):
-        """Test that error descriptions are rejected."""
+    def test_error_description_no_recall_signal(self):
+        """An error description with no correction opener is not captured."""
         result = detect_patterns("the error is: could not connect to database")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_bug_report_rejected(self):
-        """Test that bug reports are rejected."""
+    def test_bug_report_no_recall_signal(self):
+        """A bug report with no correction opener is not captured."""
         result = detect_patterns("it just opens and closes, is not working")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertIsNone(item_type)
+        self.assertIsNone(result[0])
 
     def test_short_message_confidence_boost(self):
         """Test that short messages get a confidence boost."""
@@ -389,27 +386,31 @@ class TestCJKPatternDetection(unittest.TestCase):
         result = detect_patterns("이것은 뭐입니까")
         self.assertIsNone(result[0])
 
-    # --- Non-correction English phrases ---
+    # --- Recall over-capture (ADR-0001) ---
+    # Capture is a wide recall net: phrases whose opener looks like a correction
+    # ("No problem", "don't worry") are captured here even though they aren't
+    # real corrections. Precision moved to /reflect, judged inline. These lock in
+    # that the retired NON_CORRECTION_PHRASES table no longer suppresses at capture.
 
-    def test_no_problem_not_correction(self):
-        """Test 'No problem' in mixed CJK-English text is not a correction."""
+    def test_no_problem_captured_at_recall(self):
+        """'No problem' opener is captured; /reflect judges precision inline."""
         result = detect_patterns("No problem, 次に進もう")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_dont_worry_not_correction(self):
-        """Test 'don't worry' in mixed text is not a correction."""
+    def test_dont_worry_captured_at_recall(self):
+        """'don't worry' opener is captured; precision is a /reflect concern."""
         result = detect_patterns("don't worry、大丈夫")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_no_worries_not_correction(self):
-        """Test 'No worries' is not a correction."""
+    def test_no_worries_captured_at_recall(self):
+        """'No worries' opener is captured at the recall stage."""
         result = detect_patterns("No worries, それでOK")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_never_mind_not_correction(self):
-        """Test 'Never mind' is not a correction."""
+    def test_never_mind_captured_at_recall(self):
+        """'Never mind' opener is captured at the recall stage."""
         result = detect_patterns("Never mind、別の方法でやろう")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
     # --- Japanese correction patterns ---
 
@@ -1073,31 +1074,27 @@ class TestCaptureLearningFiltering(unittest.TestCase):
         self.assertFalse(should_include_message(msg))
 
 
-class TestForwardPivotRejection(unittest.TestCase):
-    """Forward-pivot guard: a positive opener followed by a forward-looking task
-    instruction ("Perfect! Now let's add X") is a task pivot, not retrospective
-    feedback, and must not be captured. Applied ONLY to positive matches.
+class TestForwardPivotRecall(unittest.TestCase):
+    """ADR-0001 reverts the PR #37 forward-pivot guard. A positive opener
+    followed by a forward-looking task ("Perfect! Now let's add X") is captured
+    at the recall stage; whether it is a reusable learning is judged inline by
+    /reflect, not suppressed by a capture-time table.
     """
 
-    def test_positive_with_now_lets_pivot_rejected(self):
-        """'Perfect! Now let's add X' is a task pivot — must not capture."""
+    def test_positive_with_now_lets_pivot_captured(self):
+        """'Perfect! Now let's add X' is captured; /reflect judges precision."""
         result = detect_patterns(
             "Perfect! Now let's add the new column to the modal "
             "right after the title field."
         )
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "positive")
 
-    def test_positive_with_lets_implement_pivot_rejected(self):
-        """'Perfect! ... Let's implement the fix now' — task pivot."""
+    def test_positive_with_lets_implement_pivot_captured(self):
+        """'Perfect! ... Let's implement the fix now' — captured at recall."""
         result = detect_patterns(
             "perfect! exactly right. Let's implement the partition-pruning fix now."
         )
-        self.assertIsNone(result[0])
-
-    def test_positive_with_can_you_pivot_rejected(self):
-        """Positive opener + 'can you ...' request body — task pivot."""
-        result = detect_patterns("Great, that works. Can you now wire it into the CLI?")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "positive")
 
     def test_plain_positive_still_captured(self):
         """Regression: positive feedback with NO pivot still captures."""
@@ -1105,9 +1102,7 @@ class TestForwardPivotRejection(unittest.TestCase):
         self.assertEqual(result[0], "positive")
 
     def test_correction_with_pivot_phrasing_still_captured(self):
-        """A correction that isn't a positive opener still captures even when
-        phrased with 'now let's' — the guard only fires in the positive branch.
-        """
+        """A correction opener phrased with 'now let's' still captures."""
         result = detect_patterns("no, now let's use Python instead")
         self.assertEqual(result[0], "auto")
         self.assertEqual(result[3], "correction")
