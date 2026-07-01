@@ -1070,5 +1070,45 @@ class TestCaptureLearningFiltering(unittest.TestCase):
         self.assertFalse(should_include_message(msg))
 
 
+class TestForwardPivotRejection(unittest.TestCase):
+    """Forward-pivot guard: a positive opener followed by a forward-looking task
+    instruction ("Perfect! Now let's add X") is a task pivot, not retrospective
+    feedback, and must not be captured. Applied ONLY to positive matches.
+    """
+
+    def test_positive_with_now_lets_pivot_rejected(self):
+        """'Perfect! Now let's add X' is a task pivot — must not capture."""
+        result = detect_patterns(
+            "Perfect! Now let's add the new column to the modal "
+            "right after the title field."
+        )
+        self.assertIsNone(result[0])
+
+    def test_positive_with_lets_implement_pivot_rejected(self):
+        """'Perfect! ... Let's implement the fix now' — task pivot."""
+        result = detect_patterns(
+            "perfect! exactly right. Let's implement the partition-pruning fix now."
+        )
+        self.assertIsNone(result[0])
+
+    def test_positive_with_can_you_pivot_rejected(self):
+        """Positive opener + 'can you ...' request body — task pivot."""
+        result = detect_patterns("Great, that works. Can you now wire it into the CLI?")
+        self.assertIsNone(result[0])
+
+    def test_plain_positive_still_captured(self):
+        """Regression: positive feedback with NO pivot still captures."""
+        result = detect_patterns("perfect! that's exactly what I wanted")
+        self.assertEqual(result[0], "positive")
+
+    def test_correction_with_pivot_phrasing_still_captured(self):
+        """A correction that isn't a positive opener still captures even when
+        phrased with 'now let's' — the guard only fires in the positive branch.
+        """
+        result = detect_patterns("no, now let's use Python instead")
+        self.assertEqual(result[0], "auto")
+        self.assertEqual(result[3], "correction")
+
+
 if __name__ == "__main__":
     unittest.main()

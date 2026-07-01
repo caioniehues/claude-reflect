@@ -4,7 +4,7 @@ allowed-tools: Bash
 ---
 
 ## Context
-- Queue count: !`python3 scripts/read_queue.py 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0`
+- Queue count: !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/read_queue.py" 2>/dev/null | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0`
 
 ## Your Task
 

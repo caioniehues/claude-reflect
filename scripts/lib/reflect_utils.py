@@ -625,6 +625,22 @@ MAX_WEAK_PATTERN_LENGTH = 150
 # Very short messages without question marks are more likely corrections
 MIN_SHORT_CORRECTION_LENGTH = 80
 
+# Forward-pivot patterns — phrases indicating the message body is a task
+# instruction following a positive-feedback opener, NOT retrospective feedback.
+# "Perfect! Now let's add X" is structurally a task pivot, not validation of past
+# work. Applied ONLY to positive-pattern matches; real corrections (e.g. "Now
+# let's stop refactoring") still get captured by CORRECTION_PATTERNS since those
+# signals are directive-as-content, not directive-as-followup.
+#
+# Distinct from FALSE_POSITIVE_PATTERNS (apply to all detections) and
+# NON_CORRECTION_PHRASES (neutralize correction openers like "no problem").
+FORWARD_PIVOT_PATTERNS = [
+    r"\b(now|next)[, ]+(let'?s|we|i)\b",        # "Now let's", "Next, we", "Now I"
+    r"\blet'?s (add|do|build|move|update|change|fix|implement)\b",
+    r"\b(go ahead and|can you|could you|please)\b",
+    r"\bwe need to\b",
+]
+
 
 def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     """
@@ -675,6 +691,14 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
             matched_positive.append(name)
 
     if matched_positive:
+        # Forward-pivot guard — "Perfect! Now let's add X" matches a positive
+        # pattern but the body is a fresh task instruction, not retrospective
+        # feedback. Reject so task pivots don't pollute the queue (never reusable
+        # learnings). Applied ONLY here, not to corrections — "Now let's stop X"
+        # is a legitimate correction even when phrased as a task pivot.
+        for fp_pattern in FORWARD_PIVOT_PATTERNS:
+            if re.search(fp_pattern, text, re.IGNORECASE):
+                return (None, "", 0.0, "correction", 90)
         return ("positive", " ".join(matched_positive), 0.70, "positive", 90)
 
     # Skip long messages for weak patterns (likely task requests)
