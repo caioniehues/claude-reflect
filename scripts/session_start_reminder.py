@@ -11,7 +11,12 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from lib.reflect_utils import load_queue, get_cleanup_period_days, run_migrations_once
+from lib.reflect_utils import (
+    load_queue,
+    get_cleanup_period_days,
+    should_warn_cleanup_once,
+    run_migrations_once,
+)
 
 
 def main() -> int:
@@ -24,9 +29,10 @@ def main() -> int:
     if os.environ.get("CLAUDE_REFLECT_REMINDER", "true").lower() == "false":
         return 0
 
-    # Warn if cleanupPeriodDays is not configured (self-resolving: stops once user sets it)
-    cleanup_days = get_cleanup_period_days()
-    if cleanup_days is None or cleanup_days <= 30:
+    # Warn ONCE if cleanupPeriodDays is not configured. Sentinel-gated so it does
+    # not fire every session at the default 30 (hook noise, review insight IV).
+    if should_warn_cleanup_once():
+        cleanup_days = get_cleanup_period_days()
         print(f"\n⚠️  Claude Code deletes sessions after {cleanup_days or 30} days.")
         print(f"   claude-reflect needs session history for /reflect and /reflect-skills.")
         print(f"   Extend retention: add {{\"cleanupPeriodDays\": 99999}} to ~/.claude/settings.json")

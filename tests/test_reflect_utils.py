@@ -90,14 +90,14 @@ class TestQueueOperations(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_empty_file(self, mock_path):
         """Test loading empty queue."""
         mock_path.return_value = self.test_queue_path
         result = load_queue()
         self.assertEqual(result, [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_with_items(self, mock_path):
         """Test loading queue with items."""
         mock_path.return_value = self.test_queue_path
@@ -107,7 +107,7 @@ class TestQueueOperations(unittest.TestCase):
         result = load_queue()
         self.assertEqual(result, test_items)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_save_queue(self, mock_path):
         """Test saving queue."""
         mock_path.return_value = self.test_queue_path
@@ -118,7 +118,7 @@ class TestQueueOperations(unittest.TestCase):
         saved_data = json.loads(self.test_queue_path.read_text())
         self.assertEqual(saved_data, test_items)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_append_to_queue(self, mock_path):
         """Test appending to queue."""
         mock_path.return_value = self.test_queue_path
@@ -289,33 +289,30 @@ class TestPatternDetection(unittest.TestCase):
         self.assertIsNone(item_type)
         self.assertEqual(patterns, "")
 
-    def test_false_positive_question_rejected(self):
-        """Test that questions (ending with ?) are rejected."""
+    # --- No recall signal (ADR-0001) ---
+    # After the FALSE_POSITIVE_PATTERNS table was retired, these are not
+    # captured simply because they carry no recall signal (no correction opener,
+    # marker, or positive phrase) — not because a structural filter rejects them.
+
+    def test_question_no_recall_signal(self):
+        """A bare question carries no recall signal, so it is not captured."""
         result = detect_patterns("can you figure out how to make this fit?")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_task_request_rejected(self):
-        """Test that task requests are rejected."""
+    def test_task_request_no_recall_signal(self):
+        """A task request with no correction opener is not captured."""
         result = detect_patterns("please help me fix this issue")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_error_description_rejected(self):
-        """Test that error descriptions are rejected."""
+    def test_error_description_no_recall_signal(self):
+        """An error description with no correction opener is not captured."""
         result = detect_patterns("the error is: could not connect to database")
-        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(result[0])
 
-        self.assertIsNone(item_type)
-
-    def test_false_positive_bug_report_rejected(self):
-        """Test that bug reports are rejected."""
+    def test_bug_report_no_recall_signal(self):
+        """A bug report with no correction opener is not captured."""
         result = detect_patterns("it just opens and closes, is not working")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertIsNone(item_type)
+        self.assertIsNone(result[0])
 
     def test_short_message_confidence_boost(self):
         """Test that short messages get a confidence boost."""
@@ -389,27 +386,31 @@ class TestCJKPatternDetection(unittest.TestCase):
         result = detect_patterns("이것은 뭐입니까")
         self.assertIsNone(result[0])
 
-    # --- Non-correction English phrases ---
+    # --- Recall over-capture (ADR-0001) ---
+    # Capture is a wide recall net: phrases whose opener looks like a correction
+    # ("No problem", "don't worry") are captured here even though they aren't
+    # real corrections. Precision moved to /reflect, judged inline. These lock in
+    # that the retired NON_CORRECTION_PHRASES table no longer suppresses at capture.
 
-    def test_no_problem_not_correction(self):
-        """Test 'No problem' in mixed CJK-English text is not a correction."""
+    def test_no_problem_captured_at_recall(self):
+        """'No problem' opener is captured; /reflect judges precision inline."""
         result = detect_patterns("No problem, 次に進もう")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_dont_worry_not_correction(self):
-        """Test 'don't worry' in mixed text is not a correction."""
+    def test_dont_worry_captured_at_recall(self):
+        """'don't worry' opener is captured; precision is a /reflect concern."""
         result = detect_patterns("don't worry、大丈夫")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_no_worries_not_correction(self):
-        """Test 'No worries' is not a correction."""
+    def test_no_worries_captured_at_recall(self):
+        """'No worries' opener is captured at the recall stage."""
         result = detect_patterns("No worries, それでOK")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
-    def test_never_mind_not_correction(self):
-        """Test 'Never mind' is not a correction."""
+    def test_never_mind_captured_at_recall(self):
+        """'Never mind' opener is captured at the recall stage."""
         result = detect_patterns("Never mind、別の方法でやろう")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "auto")
 
     # --- Japanese correction patterns ---
 
@@ -1073,31 +1074,27 @@ class TestCaptureLearningFiltering(unittest.TestCase):
         self.assertFalse(should_include_message(msg))
 
 
-class TestForwardPivotRejection(unittest.TestCase):
-    """Forward-pivot guard: a positive opener followed by a forward-looking task
-    instruction ("Perfect! Now let's add X") is a task pivot, not retrospective
-    feedback, and must not be captured. Applied ONLY to positive matches.
+class TestForwardPivotRecall(unittest.TestCase):
+    """ADR-0001 reverts the PR #37 forward-pivot guard. A positive opener
+    followed by a forward-looking task ("Perfect! Now let's add X") is captured
+    at the recall stage; whether it is a reusable learning is judged inline by
+    /reflect, not suppressed by a capture-time table.
     """
 
-    def test_positive_with_now_lets_pivot_rejected(self):
-        """'Perfect! Now let's add X' is a task pivot — must not capture."""
+    def test_positive_with_now_lets_pivot_captured(self):
+        """'Perfect! Now let's add X' is captured; /reflect judges precision."""
         result = detect_patterns(
             "Perfect! Now let's add the new column to the modal "
             "right after the title field."
         )
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "positive")
 
-    def test_positive_with_lets_implement_pivot_rejected(self):
-        """'Perfect! ... Let's implement the fix now' — task pivot."""
+    def test_positive_with_lets_implement_pivot_captured(self):
+        """'Perfect! ... Let's implement the fix now' — captured at recall."""
         result = detect_patterns(
             "perfect! exactly right. Let's implement the partition-pruning fix now."
         )
-        self.assertIsNone(result[0])
-
-    def test_positive_with_can_you_pivot_rejected(self):
-        """Positive opener + 'can you ...' request body — task pivot."""
-        result = detect_patterns("Great, that works. Can you now wire it into the CLI?")
-        self.assertIsNone(result[0])
+        self.assertEqual(result[0], "positive")
 
     def test_plain_positive_still_captured(self):
         """Regression: positive feedback with NO pivot still captures."""
@@ -1105,9 +1102,7 @@ class TestForwardPivotRejection(unittest.TestCase):
         self.assertEqual(result[0], "positive")
 
     def test_correction_with_pivot_phrasing_still_captured(self):
-        """A correction that isn't a positive opener still captures even when
-        phrased with 'now let's' — the guard only fires in the positive branch.
-        """
+        """A correction opener phrased with 'now let's' still captures."""
         result = detect_patterns("no, now let's use Python instead")
         self.assertEqual(result[0], "auto")
         self.assertEqual(result[3], "correction")
@@ -1124,13 +1119,13 @@ class TestQueueDurability(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_atomic_write_leaves_prior_queue_intact_on_crash(self, mock_path):
         mock_path.return_value = self.qpath
         save_queue([{"message": "original"}])
 
         # Simulate a crash at the os.replace step of the next write.
-        with patch("lib.reflect_utils.os.replace", side_effect=OSError("crash")):
+        with patch("lib.queue.os.replace", side_effect=OSError("crash")):
             with self.assertRaises(OSError):
                 save_queue([{"message": "new"}])
 
@@ -1138,7 +1133,7 @@ class TestQueueDurability(unittest.TestCase):
         self.assertEqual(load_queue(), [{"message": "original"}])
         self.assertEqual(list(self.qpath.parent.glob(".queue-*.tmp")), [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_corrupt_queue_quarantined_not_overwritten(self, mock_path):
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
@@ -1153,7 +1148,7 @@ class TestQueueDurability(unittest.TestCase):
         # The bad content is preserved in the backup, not lost.
         self.assertIn("not valid json", backups[0].read_text(encoding="utf-8"))
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_non_list_json_coerced_to_empty(self, mock_path):
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
@@ -1163,7 +1158,7 @@ class TestQueueDurability(unittest.TestCase):
         result = load_queue()
         self.assertEqual(result, [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_concurrent_appends_all_persist(self, mock_path):
         import threading
         mock_path.return_value = self.qpath
@@ -1186,13 +1181,13 @@ class TestQueueDurability(unittest.TestCase):
             sorted(f"item-{n}" for n in range(8)),
         )
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_does_not_migrate(self, mock_path):
         # Migration is a filesystem mutation; it must not run on the read path.
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
         self.qpath.write_text("[]", encoding="utf-8")
-        with patch("lib.reflect_utils.migrate_global_queue") as mock_migrate:
+        with patch("lib.queue.migrate_global_queue") as mock_migrate:
             load_queue()
             mock_migrate.assert_not_called()
 
@@ -1208,8 +1203,8 @@ class TestMigrationSentinel(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.migrate_global_queue")
-    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    @patch("lib.queue.migrate_global_queue")
+    @patch("lib.queue.get_migration_sentinel_path")
     def test_runs_once_then_skips(self, mock_sentinel, mock_migrate):
         mock_sentinel.return_value = self.sentinel
 
@@ -1220,8 +1215,8 @@ class TestMigrationSentinel(unittest.TestCase):
         self.assertEqual(mock_migrate.call_count, 1)
         self.assertTrue(self.sentinel.exists())
 
-    @patch("lib.reflect_utils.migrate_global_queue")
-    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    @patch("lib.queue.migrate_global_queue")
+    @patch("lib.queue.get_migration_sentinel_path")
     def test_failure_does_not_mark_done(self, mock_sentinel, mock_migrate):
         # A transient migration failure must NOT write the sentinel, so the next
         # session retries instead of stranding the legacy queue forever.

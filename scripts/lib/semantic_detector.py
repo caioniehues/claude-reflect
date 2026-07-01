@@ -4,10 +4,12 @@
 Uses `claude -p` (print mode) to semantically analyze user messages
 and determine if they contain reusable learnings.
 """
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
-from typing import Optional, Dict, Any
+from typing import Any
 
 # Default timeout for Claude CLI calls (seconds)
 DEFAULT_TIMEOUT = 30
@@ -46,8 +48,8 @@ Guidelines:
 def semantic_analyze(
     text: str,
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    model: str | None = None
+) -> dict[str, Any] | None:
     """
     Analyze text using Claude to determine if it's a learning.
 
@@ -124,7 +126,7 @@ def semantic_analyze(
         return None
 
 
-def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+def _extract_json_from_text(text: str) -> dict[str, Any] | None:
     """Try to extract JSON from text that may have surrounding content."""
     # Find JSON object boundaries
     start = text.find('{')
@@ -146,7 +148,7 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _validate_response(content: Any) -> Optional[Dict[str, Any]]:
+def _validate_response(content: Any) -> dict[str, Any] | None:
     """Validate and normalize the response from Claude."""
     if not isinstance(content, dict):
         return None
@@ -181,62 +183,6 @@ def _validate_response(content: Any) -> Optional[Dict[str, Any]]:
         "reasoning": str(content.get("reasoning", "")),
         "extracted_learning": content.get("extracted_learning") if is_learning else None,
     }
-
-
-def validate_queue_items(
-    items: list,
-    timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
-    """
-    Validate a list of queue items using semantic analysis.
-
-    Items that fail semantic validation are filtered out.
-    Items that pass have their confidence updated.
-
-    Args:
-        items: List of queue items from learnings-queue.json
-        timeout: Timeout per item
-        model: Optional model override
-
-    Returns:
-        Filtered and enhanced list of queue items
-    """
-    validated = []
-
-    for item in items:
-        message = item.get("message", "")
-        if not message:
-            continue
-
-        # Run semantic analysis
-        result = semantic_analyze(message, timeout=timeout, model=model)
-
-        if result is None:
-            # Fallback: keep original item if semantic fails
-            validated.append(item)
-            continue
-
-        if not result.get("is_learning"):
-            # Semantic says it's not a learning - filter out
-            continue
-
-        # Merge semantic analysis into item
-        enhanced = {**item}
-        enhanced["semantic_confidence"] = result["confidence"]
-        enhanced["semantic_type"] = result["type"]
-        enhanced["semantic_reasoning"] = result["reasoning"]
-
-        if result.get("extracted_learning"):
-            enhanced["extracted_learning"] = result["extracted_learning"]
-
-        # Update confidence to be the higher of regex and semantic
-        original_confidence = item.get("confidence", 0.6)
-        enhanced["confidence"] = max(original_confidence, result["confidence"])
-
-        validated.append(enhanced)
-
-    return validated
 
 
 # =============================================================================
@@ -276,8 +222,8 @@ def validate_tool_error(
     count: int,
     suggested_guideline: str,
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    model: str | None = None
+) -> dict[str, Any] | None:
     """
     Validate a tool error pattern and refine its guideline using Claude.
 
@@ -370,10 +316,10 @@ def validate_tool_error(
 
 
 def validate_tool_errors(
-    aggregated_errors: list,
+    aggregated_errors: list[dict[str, Any]],
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
+    model: str | None = None
+) -> list[dict[str, Any]]:
     """
     Validate a list of aggregated tool errors using semantic analysis.
 
@@ -459,10 +405,10 @@ Rules:
 
 
 def detect_contradictions(
-    entries: list,
+    entries: list[str],
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
+    model: str | None = None
+) -> list[dict[str, Any]]:
     """
     Find semantically contradicting entries in a list of CLAUDE.md entries.
 

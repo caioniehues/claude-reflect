@@ -1,4 +1,6 @@
 #!/bin/bash
+# COUPLING: differential-test oracle for the Python port — tests/test_integration.py
+# (BASH_SCRIPTS) compares the Python script output against this. Do not delete.
 # V3: INFORMS about learnings and saves backup (does NOT block)
 # Used by PreCompact hook
 

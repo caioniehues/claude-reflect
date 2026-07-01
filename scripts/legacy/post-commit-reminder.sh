@@ -1,4 +1,6 @@
 #!/bin/bash
+# COUPLING: differential-test oracle for the Python port — tests/test_integration.py
+# (BASH_SCRIPTS) compares the Python script output against this. Do not delete.
 # Checks if a git commit just happened and reminds about /reflect
 # Used by PostToolUse hook for Bash tool
 
