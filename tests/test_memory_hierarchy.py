@@ -126,7 +126,7 @@ class TestFindClaudeFilesRules(unittest.TestCase):
         self.assertIsNotNone(rule_files[0]["frontmatter"])
         self.assertEqual(rule_files[0]["frontmatter"]["paths"], ["src/api/"])
 
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_discovers_user_rules(self, mock_claude_dir):
         """Test that ~/.claude/rules/*.md files are discovered."""
         fake_claude_dir = Path(self.temp_dir) / "fake_claude"
@@ -151,7 +151,7 @@ class TestFindClaudeFilesRules(unittest.TestCase):
         self.assertEqual(len(local_files), 1)
         self.assertEqual(local_files[0]["relative_path"], "./CLAUDE.local.md")
 
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_all_types_together(self, mock_claude_dir):
         """Test discovering all file types in one call."""
         fake_claude_dir = Path(self.temp_dir) / "fake_claude"
@@ -285,7 +285,7 @@ class TestAutoMemoryPath(unittest.TestCase):
         self.assertNotIn("\\", result)
 
     @unittest.skipIf(platform.system() == "Windows", "Unix-specific path encoding")
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_auto_memory_path_resolution(self, mock_claude_dir):
         """Test auto memory path is correctly resolved."""
         mock_claude_dir.return_value = Path("/home/user/.claude")
@@ -301,7 +301,7 @@ class TestAutoMemoryPath(unittest.TestCase):
         """Test reading auto memory with actual files."""
         temp_dir = tempfile.mkdtemp()
         try:
-            with patch("lib.reflect_utils.get_auto_memory_path") as mock_path:
+            with patch("lib.memory.get_auto_memory_path") as mock_path:
                 memory_dir = Path(temp_dir) / "memory"
                 memory_dir.mkdir()
                 (memory_dir / "general.md").write_text("# General\n- Entry one\n- Entry two\n")
@@ -352,7 +352,7 @@ class TestReadAllMemoryEntries(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_multi_tier_reads(self, mock_claude_dir):
         """Test reading entries from multiple tiers."""
         fake_claude = Path(self.temp_dir) / "fake_claude"
@@ -371,7 +371,7 @@ class TestReadAllMemoryEntries(unittest.TestCase):
         self.assertIn("Always test", texts)
         self.assertIn("Use postgres", texts)
 
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_source_tracking(self, mock_claude_dir):
         """Test that entries track their source file and type."""
         fake_claude = Path(self.temp_dir) / "fake_claude"
@@ -388,7 +388,7 @@ class TestReadAllMemoryEntries(unittest.TestCase):
         self.assertTrue(len(root_entries) > 0)
         self.assertEqual(global_entries[0]["source_file"], "~/.claude/CLAUDE.md")
 
-    @patch("lib.reflect_utils.get_claude_dir")
+    @patch("lib.memory.get_claude_dir")
     def test_missing_files_no_error(self, mock_claude_dir):
         """Test that missing files don't cause errors."""
         fake_claude = Path(self.temp_dir) / "fake_claude"

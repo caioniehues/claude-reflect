@@ -90,14 +90,14 @@ class TestQueueOperations(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_empty_file(self, mock_path):
         """Test loading empty queue."""
         mock_path.return_value = self.test_queue_path
         result = load_queue()
         self.assertEqual(result, [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_with_items(self, mock_path):
         """Test loading queue with items."""
         mock_path.return_value = self.test_queue_path
@@ -107,7 +107,7 @@ class TestQueueOperations(unittest.TestCase):
         result = load_queue()
         self.assertEqual(result, test_items)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_save_queue(self, mock_path):
         """Test saving queue."""
         mock_path.return_value = self.test_queue_path
@@ -118,7 +118,7 @@ class TestQueueOperations(unittest.TestCase):
         saved_data = json.loads(self.test_queue_path.read_text())
         self.assertEqual(saved_data, test_items)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_append_to_queue(self, mock_path):
         """Test appending to queue."""
         mock_path.return_value = self.test_queue_path
@@ -1119,13 +1119,13 @@ class TestQueueDurability(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_atomic_write_leaves_prior_queue_intact_on_crash(self, mock_path):
         mock_path.return_value = self.qpath
         save_queue([{"message": "original"}])
 
         # Simulate a crash at the os.replace step of the next write.
-        with patch("lib.reflect_utils.os.replace", side_effect=OSError("crash")):
+        with patch("lib.queue.os.replace", side_effect=OSError("crash")):
             with self.assertRaises(OSError):
                 save_queue([{"message": "new"}])
 
@@ -1133,7 +1133,7 @@ class TestQueueDurability(unittest.TestCase):
         self.assertEqual(load_queue(), [{"message": "original"}])
         self.assertEqual(list(self.qpath.parent.glob(".queue-*.tmp")), [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_corrupt_queue_quarantined_not_overwritten(self, mock_path):
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
@@ -1148,7 +1148,7 @@ class TestQueueDurability(unittest.TestCase):
         # The bad content is preserved in the backup, not lost.
         self.assertIn("not valid json", backups[0].read_text(encoding="utf-8"))
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_non_list_json_coerced_to_empty(self, mock_path):
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
@@ -1158,7 +1158,7 @@ class TestQueueDurability(unittest.TestCase):
         result = load_queue()
         self.assertEqual(result, [])
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_concurrent_appends_all_persist(self, mock_path):
         import threading
         mock_path.return_value = self.qpath
@@ -1181,13 +1181,13 @@ class TestQueueDurability(unittest.TestCase):
             sorted(f"item-{n}" for n in range(8)),
         )
 
-    @patch("lib.reflect_utils.get_queue_path")
+    @patch("lib.queue.get_queue_path")
     def test_load_queue_does_not_migrate(self, mock_path):
         # Migration is a filesystem mutation; it must not run on the read path.
         mock_path.return_value = self.qpath
         self.qpath.parent.mkdir(parents=True)
         self.qpath.write_text("[]", encoding="utf-8")
-        with patch("lib.reflect_utils.migrate_global_queue") as mock_migrate:
+        with patch("lib.queue.migrate_global_queue") as mock_migrate:
             load_queue()
             mock_migrate.assert_not_called()
 
@@ -1203,8 +1203,8 @@ class TestMigrationSentinel(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch("lib.reflect_utils.migrate_global_queue")
-    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    @patch("lib.queue.migrate_global_queue")
+    @patch("lib.queue.get_migration_sentinel_path")
     def test_runs_once_then_skips(self, mock_sentinel, mock_migrate):
         mock_sentinel.return_value = self.sentinel
 
@@ -1215,8 +1215,8 @@ class TestMigrationSentinel(unittest.TestCase):
         self.assertEqual(mock_migrate.call_count, 1)
         self.assertTrue(self.sentinel.exists())
 
-    @patch("lib.reflect_utils.migrate_global_queue")
-    @patch("lib.reflect_utils.get_migration_sentinel_path")
+    @patch("lib.queue.migrate_global_queue")
+    @patch("lib.queue.get_migration_sentinel_path")
     def test_failure_does_not_mark_done(self, mock_sentinel, mock_migrate):
         # A transient migration failure must NOT write the sentinel, so the next
         # session retries instead of stranding the legacy queue forever.
