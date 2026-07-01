@@ -8,6 +8,14 @@ numbers reflect the tree at review time.
 
 Severity: **HIGH** (correctness / data loss) · **MED** · **LOW**.
 
+> **Update 2026-07-01 — decisions since review.** Insight I (regex-vs-semantic
+> fork) is resolved by [ADR-0001](docs/adr/0001-detection-recall-at-capture-precision-at-process.md):
+> **recall at capture, precision at process (inline)**. This retires the
+> capture-time precision tables and deletes the subprocess semantic layer, which
+> rewrites findings below: **#5 deleted** (not fixed), **#6 moot**, **#8/#9 scope
+> shrinks**, **cross-cutting I resolved**. See finding #5 (now "Detection rework")
+> for the replacement work item.
+
 ---
 
 ## Headline
@@ -52,18 +60,26 @@ payload `cwd` through, one concurrency test.
    `.claude/commands/`; `reflect-skills.md:15,281` uses `.claude/commands/`. They
    disagree → skill routing silently no-ops for user commands. Pick one source of
    truth (`.claude/commands/` + `~/.claude/commands/`), align reflect.md + SKILL.md.
-5. **Semantic-unavailable = silent bypass** — `semantic_detector.py:118-124`,
-   `validate_queue_items:215-218`. `claude` missing or timing out returns `None`,
-   identical to "not a learning" → every item passes unvalidated with no warning.
-   Distinguish unavailability from rejection; warn once.
+5. **Detection rework** (replaces the old "semantic silent-bypass" fix — deleted,
+   the subprocess is gone) — per [ADR-0001](docs/adr/0001-detection-recall-at-capture-precision-at-process.md):
+   (a) make capture pure recall — retire `FALSE_POSITIVE_PATTERNS`,
+   `NON_CORRECTION_PHRASES`, `FORWARD_PIVOT_PATTERNS` (revert PR #37 guard) and
+   their branches in `detect_patterns` (`reflect_utils.py:569-642,676-701`);
+   (b) delete the subprocess semantic layer on the learning path —
+   `validate_queue_items` / `semantic_analyze` in `semantic_detector.py` and
+   `/reflect` Step 1.5 (`reflect.md:742-810`), moving precision to inline judgment
+   by the `/reflect` agent. Retires the silent-bypass bug by construction (no
+   subprocess left to be unavailable). See #6 for the `--scan-history` / `--organize`
+   consumers that share the file but are out of ADR-0001 scope.
 
 ## Refactoring (structure)
 
-6. **`_call_claude_json()` helper** — highest leverage-per-line.
-   `semantic_detector.py` triplicates build-cmd → `subprocess.run` → parse →
-   except across `semantic_analyze`, `validate_tool_error`, `detect_contradictions`;
-   none testable without monkeypatching global `subprocess.run`. One injectable
-   runner collapses it and makes the whole file unit-testable.
+6. ~~**`_call_claude_json()` helper**~~ — **MOOT** per ADR-0001. The triplicated
+   subprocess plumbing in `semantic_detector.py` is deleted wholesale by finding #5,
+   not refactored. (Note: `validate_tool_error` / `validate_tool_errors` and
+   `detect_contradictions` also live in this file and feed `--scan-history` /
+   `--organize` — confirm those paths move to inline agent judgment too, or preserve
+   just those functions, when executing #5.)
 7. **Split `reflect_utils.py`** — LSP-confirmed 9-concern grab-bag (1197 LOC):
    paths, queue I/O + migration, timestamps, pattern tables, `detect_patterns`,
    memory-hierarchy discovery + `suggest_*`, session-JSONL extraction, tool-error
@@ -79,7 +95,10 @@ payload `cwd` through, one concurrency test.
    (`reflect_utils.py:856-862`) hard-codes its own regex (no CJK) that diverges
    from the `CORRECTION_PATTERNS` tables; `compare_detection.py` has a third.
    `--corrections-only` silently misses every non-English correction. Route
-   through a shared predicate.
+   through a shared predicate. **Scope note (ADR-0001):** the shared predicate is
+   now recall-only — precision moved to the inline `/reflect` agent — so "one
+   definition" means one wide-net matcher, not one precision-tuned one. CJK
+   *precision* patterns stop mattering; keep only CJK *recall* openers.
 10. **`load_queue` migration side-effect** — `reflect_utils.py:478`. A function
     named *load* mutates global filesystem state (unlocked read-modify-write across
     every project file) on every hook fire. Make migration an explicit one-shot at
@@ -128,6 +147,10 @@ payload `cwd` through, one concurrency test.
   precision is the costliest option. Decide before adding more patterns. (The
   forward-pivot guard merged from PR #37 pushes toward the regex-precision path —
   worth keeping only if that's the chosen direction.)
+  **RESOLVED by [ADR-0001](docs/adr/0001-detection-recall-at-capture-precision-at-process.md):**
+  neither run-both nor drop-semantic — **over-capture at regex, filter inline at
+  `/reflect`** (not via subprocess `claude -p`). Regex commits to recall; the PR #37
+  guard is reverted; the subprocess semantic layer is deleted (see finding #5).
 - **II. Duplication is systemic because the docs hand-mirror the code.** Every
   "3 sources of truth" finding has one root: markdown restates what Python already
   encodes (pattern tables, `find_claude_files` types). Real fix is generating the
@@ -155,8 +178,8 @@ payload `cwd` through, one concurrency test.
   warns across both lib files).
 - `session_start_reminder.py` has zero test coverage anywhere (the only hook
   entrypoint exercised by nothing) — add a subprocess test to `test_integration.py`.
-- `semantic_detector` live `claude -p` contract untested (all 50 tests mock
-  `subprocess.run`) — add one opt-in integration test gated on `claude` on PATH.
+- ~~`semantic_detector` live `claude -p` contract untested~~ — **MOOT** per ADR-0001;
+  the subprocess layer is deleted (finding #5). Its ~50 mocked tests go with it.
 
 ## Non-findings (verified — don't chase)
 
@@ -172,9 +195,12 @@ payload `cwd` through, one concurrency test.
 ## Suggested sequence
 
 1. Persistence layer (must-fix 1, 2, + list-coercion) — protects the product
-   promise, smallest change, add one concurrency test.
-2. Decide insight I (keep vs drop regex-precision) — changes what "fixing"
-   detection means.
-3. `_call_claude_json()` extraction (refactor 6) — unlocks semantic-detector tests.
-4. `reflect.md` sprawl extraction (skill 11) — biggest context-load win.
+   promise, smallest change, add one concurrency test. Independent of detection.
+2. ~~Decide insight I~~ — **DONE** ([ADR-0001](docs/adr/0001-detection-recall-at-capture-precision-at-process.md)).
+3. Detection rework (must-fix 5) — retire capture-time precision tables + delete
+   the subprocess semantic layer; precision moves inline to `/reflect`. Folds in
+   #6 (moot), #9 (recall-only predicate), cross-cutting I. Do after step 1 so the
+   queue durability fix lands before the queue gets noisier.
+4. `reflect.md` sprawl extraction (skill 11) — biggest context-load win. Note the
+   deleted Step 1.5 (from step 3) already removes one always-loaded block.
 5. Split `reflect_utils.py` (refactor 7) behind a re-export shim.
