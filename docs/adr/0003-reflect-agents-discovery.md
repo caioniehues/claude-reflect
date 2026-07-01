@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Agent discovery: `/reflect-agents`

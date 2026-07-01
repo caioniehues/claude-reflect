@@ -18,7 +18,8 @@ scripts/                        → Python scripts for hooks and extraction
 scripts/dev.sh                  → Launch a live-plugin dev session (--plugin-dir)
 scripts/lib/                    → Shared utilities (paths/patterns/queue/memory/sessions; reflect_utils.py is a re-export shim)
 scripts/legacy/                 → Deprecated bash scripts (for reference)
-commands/*.md                   → Slash commands: /reflect, /reflect-skills, /skip-reflect, /view-queue
+commands/*.md                   → Slash commands: /reflect, /reflect-skills, /reflect-agents, /skip-reflect, /view-queue
+commands/reflect/*.md           → Disclosed flag bodies for /reflect (scan-history, all-projects, dedupe, organize, review, targets)
 skills/claude-reflect/SKILL.md  → Auto-loaded skill (context surfaced when relevant)
 tests/                          → Test suite (pytest)
 ```
@@ -50,13 +51,15 @@ tests/                          → Test suite (pytest)
 - `scripts/lib/patterns.py`: Regex detection — `detect_patterns`, `is_correction_candidate`, `Detection`
 - `scripts/lib/queue.py`: Durable per-project queue I/O (atomic writes, `_QueueLock`, migration)
 - `scripts/lib/memory.py`: Memory-hierarchy discovery, auto memory, rule frontmatter parsing, routing suggestions
-- `scripts/lib/sessions.py`: Session-JSONL extraction and tool-error aggregation
+- `scripts/lib/sessions.py`: Session-JSONL extraction and tool-error aggregation; cross-project sweep (`scan_all_projects` + shared `_iter_project_sessions` walk) and tool-call sequence extraction (`extract_tool_sequences`/`aggregate_tool_sequences`) — the shared pass-1 machinery behind `/reflect --all-projects` and `/reflect-agents` (ADR-0002/0003)
 - `scripts/lib/semantic_detector.py`: AI-powered semantic analysis via `claude -p` (used by `--scan-history`/`--organize`)
 - `scripts/capture_learning.py`: Pattern detection (correction, positive, explicit markers) with confidence scoring
 - `scripts/check_learnings.py`: PreCompact hook that backs up queue before context compaction
 - `scripts/extract_session_learnings.py`: Extracts user messages from session JSONL files
 - `scripts/extract_tool_rejections.py`: Extracts user corrections from tool rejections
 - `scripts/compare_detection.py`: Compare regex vs semantic detection on session data
+- `scripts/scan_all_projects.py`: Subprocess seam for the cross-project global-harvest sweep (`/reflect --all-projects`)
+- `scripts/extract_tool_sequences.py`: Subprocess seam for compact tool-call sequence extraction (`/reflect-agents`)
 - `commands/reflect.md`: Main skill defining the /reflect workflow (memory hierarchy aware)
 - `commands/reflect-skills.md`: Skill discovery - AI-powered pattern detection from sessions
 

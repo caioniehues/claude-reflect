@@ -6,7 +6,8 @@ allowed-tools: Read, Edit, Write, Glob, Bash, Grep, AskUserQuestion, TaskCreate,
 ## Arguments
 - `--dry-run`: Preview all changes without prompting or writing.
 - `--scan-history`: Scan ALL past sessions for corrections (useful for first-time setup or cold start).
-- `--days N`: Limit history scan to last N days (default: 30). Only used with `--scan-history`.
+- `--all-projects`: **Global harvest.** Sweep session history across EVERY project, dedupe corrections cross-project, and surface the ones worth promoting to global `~/.claude/CLAUDE.md` (ranked by how many projects each recurred in). Implies `--scan-history`, forces `global` scope, only ever writes global. Composes with `--days` and `--dry-run`.
+- `--days N`: Limit history scan to last N days (default: 30 for `--scan-history`; **90 for `--all-projects`**). Only used with history scans.
 - `--targets`: Show detected AI assistant config files and exit.
 - `--review`: Show learnings with stale/decayed entries for review.
 - `--dedupe`: Scan CLAUDE.md for similar entries and propose consolidations.
@@ -129,6 +130,12 @@ matching reference file, follow it, then exit **without processing the queue**:
 
 `--scan-history` does NOT exit early — it feeds the normal workflow (see Step 0.5).
 
+`--all-projects` also does NOT exit early — it is a self-sufficient flag that
+**implies `--scan-history`** and **forces `global` scope**. When present, read
+`${CLAUDE_PLUGIN_ROOT}/commands/reflect/all-projects.md` and follow it *instead of*
+the per-project Step 0.5 scan. `--scan-history --all-projects` is accepted and
+identical to `--all-projects` alone.
+
 ### First-Run Detection (Per-Project)
 
 Check if /reflect has been run in THIS project before. Run these commands separately:
@@ -145,7 +152,12 @@ ls ~/.claude/projects/ | grep -i "$(basename "$(pwd)")"
 test -f ~/.claude/projects/PROJECT_FOLDER/.reflect-initialized && echo "initialized" || echo "first-run"
 ```
 
-**If "first-run" for this project AND user did NOT pass `--scan-history`:**
+**If user passed `--all-projects`, SKIP first-run detection entirely** — go
+straight to the global harvest (Step 0, `--all-projects` branch). The global sweep
+is inherently a cold-start recovery path and must not be intercepted by a
+per-project first-run offer.
+
+**If "first-run" for this project AND user did NOT pass `--scan-history` or `--all-projects`:**
 
 Use AskUserQuestion to recommend historical scan:
 ```json
@@ -177,6 +189,15 @@ If user chooses "Yes, scan history", proceed as if `--scan-history` was passed.
 - THEN: Scan ALL historical sessions for this project (Step 0.5)
 - Combine queue items + history scan results into working list
 - Proceed to Step 3 (Project-Aware Filtering)
+
+**If user passed `--all-projects`:**
+- This is a **global harvest** — do NOT process the per-project queue or run the
+  per-project Step 0.5 scan.
+- Read `${CLAUDE_PLUGIN_ROOT}/commands/reflect/all-projects.md` and follow it end
+  to end. It runs the cross-project sweep (pass-1 script), judges the shortlist
+  inline, writes only to global `~/.claude/CLAUDE.md`, and lists project-specific
+  finds per project. `--days` and `--dry-run` compose as documented there.
+- Then exit (do not fall through to the normal queue workflow).
 
 ### Step 0.5: Historical Scan (only with --scan-history)
 
