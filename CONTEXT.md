@@ -17,7 +17,7 @@ decisions of record live in `docs/adr/`.
 - **Skill discovery** — `/reflect-skills`: AI-powered discovery of repeated
   *top-level user workflows* → proposes command files.
 
-## Proposed terms (features under design)
+## Feature terms (ADR-0002/0003, accepted — shipped in #12)
 
 ### Cross-project global harvest (`/reflect --all-projects`, ADR-0002)
 

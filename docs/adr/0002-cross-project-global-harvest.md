@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Cross-project scan: global harvest via `/reflect --all-projects`

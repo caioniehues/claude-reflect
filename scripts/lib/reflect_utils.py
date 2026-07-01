@@ -76,6 +76,10 @@ from .sessions import (
     PROJECT_SPECIFIC_ERROR_PATTERNS,
     extract_tool_errors,
     aggregate_tool_errors,
+    _iter_project_sessions,
+    scan_all_projects,
+    extract_tool_sequences,
+    aggregate_tool_sequences,
 )
 
 __all__ = [
@@ -102,4 +106,6 @@ __all__ = [
     "extract_user_messages", "extract_tool_rejections",
     "TOOL_ERROR_EXCLUDE_PATTERNS", "PROJECT_SPECIFIC_ERROR_PATTERNS",
     "extract_tool_errors", "aggregate_tool_errors",
+    "_iter_project_sessions", "scan_all_projects",
+    "extract_tool_sequences", "aggregate_tool_sequences",
 ]
