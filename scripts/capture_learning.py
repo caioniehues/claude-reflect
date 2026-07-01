@@ -70,10 +70,13 @@ def main() -> int:
 
         append_to_queue(queue_item, project_dir=cwd)
 
-        # Output feedback for Claude to acknowledge the capture
-        # UserPromptSubmit hooks with exit code 0 add stdout as context
-        preview = prompt[:40] + "..." if len(prompt) > 40 else prompt
-        print(f"📝 Learning captured: '{preview}' (confidence: {confidence:.0%})")
+        # Echo the capture only when explicitly enabled. A UserPromptSubmit hook's
+        # stdout is injected as context on EVERY matching prompt, so echoing by
+        # default adds per-turn noise (hook noise, review insight IV). Opt in with
+        # CLAUDE_REFLECT_ECHO=true.
+        if os.environ.get("CLAUDE_REFLECT_ECHO", "false").lower() == "true":
+            preview = prompt[:40] + "..." if len(prompt) > 40 else prompt
+            print(f"📝 Learning captured: '{preview}' (confidence: {confidence:.0%})")
 
     return 0
 

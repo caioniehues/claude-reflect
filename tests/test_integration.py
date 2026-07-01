@@ -17,6 +17,11 @@ IS_WINDOWS = sys.platform == 'win32'
 skip_on_windows = unittest.skipIf(IS_WINDOWS, "Bash scripts not available on Windows")
 
 # Script locations
+#
+# COUPLING: scripts/legacy/*.sh are NOT dead code — they are the differential-test
+# oracle. Each Python script is validated against its bash predecessor below to
+# prove behavior parity. Do not delete scripts/legacy/ without also removing these
+# tests; the bash scripts and this file live and die together.
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 BASH_SCRIPTS = {
     "check_learnings": SCRIPTS_DIR / "legacy" / "check-learnings.sh",
@@ -31,6 +36,7 @@ PYTHON_SCRIPTS = {
     "capture_learning": SCRIPTS_DIR / "capture_learning.py",
     "extract_session_learnings": SCRIPTS_DIR / "extract_session_learnings.py",
     "extract_tool_rejections": SCRIPTS_DIR / "extract_tool_rejections.py",
+    "session_start_reminder": SCRIPTS_DIR / "session_start_reminder.py",
 }
 
 
@@ -480,6 +486,63 @@ class TestBashPythonOutputEquivalence(unittest.TestCase):
         python_lines = set(python_stdout.strip().split("\n")) if python_stdout.strip() else set()
 
         self.assertEqual(bash_lines, python_lines)
+
+
+class TestSessionStartReminder(unittest.TestCase):
+    """Subprocess coverage for the SessionStart reminder hook (#5).
+
+    Runs the script with HOME pointed at a temp dir so the queue, settings, and
+    sentinels are fully isolated per test.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.env = dict(os.environ)
+        self.env["HOME"] = self.temp_dir
+        self.env["USERPROFILE"] = self.temp_dir  # Path.home() on Windows
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _run(self):
+        result = subprocess.run(
+            [sys.executable, str(PYTHON_SCRIPTS["session_start_reminder"])],
+            input="",
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPTS_DIR),
+            env=self.env,
+        )
+        return result.stdout, result.stderr, result.returncode
+
+    def test_reminder_disabled_env_is_silent(self):
+        """CLAUDE_REFLECT_REMINDER=false short-circuits to a silent exit 0."""
+        self.env["CLAUDE_REFLECT_REMINDER"] = "false"
+        out, _, code = self._run()
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_cleanup_nag_fires_once_then_is_silenced(self):
+        """The retention nag shows on the first run, then the sentinel silences it."""
+        out1, _, code1 = self._run()
+        self.assertEqual(code1, 0)
+        self.assertIn("deletes sessions", out1)
+
+        out2, _, code2 = self._run()
+        self.assertEqual(code2, 0)
+        self.assertNotIn("deletes sessions", out2)
+
+    def test_no_nag_when_retention_configured(self):
+        """A high cleanupPeriodDays suppresses the nag; empty queue → no output."""
+        claude_dir = Path(self.temp_dir) / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "settings.json").write_text(
+            '{"cleanupPeriodDays": 99999}', encoding="utf-8"
+        )
+        out, _, code = self._run()
+        self.assertEqual(code, 0)
+        self.assertNotIn("deletes sessions", out)
 
 
 if __name__ == "__main__":

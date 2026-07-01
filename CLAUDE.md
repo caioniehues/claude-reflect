@@ -209,7 +209,7 @@ User: "no, always run tests before deploying"
 - **Linux**: Fully supported
 - **Windows**: Fully supported (native Python, no WSL required)
 
-Requires Python 3.6+.
+Requires Python 3.8+ (matches the CI floor).
 
 ## Releasing
 

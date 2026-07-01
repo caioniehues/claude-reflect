@@ -1,4 +1,6 @@
 #!/bin/bash
+# COUPLING: differential-test oracle for the Python port — tests/test_integration.py
+# (BASH_SCRIPTS) compares the Python script output against this. Do not delete.
 # Extract user messages from a Claude Code session file
 # Usage: extract-session-learnings.sh <session-file> [--corrections-only]
 

@@ -4,10 +4,12 @@
 Uses `claude -p` (print mode) to semantically analyze user messages
 and determine if they contain reusable learnings.
 """
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
-from typing import Optional, Dict, Any
+from typing import Any
 
 # Default timeout for Claude CLI calls (seconds)
 DEFAULT_TIMEOUT = 30
@@ -46,8 +48,8 @@ Guidelines:
 def semantic_analyze(
     text: str,
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    model: str | None = None
+) -> dict[str, Any] | None:
     """
     Analyze text using Claude to determine if it's a learning.
 
@@ -124,7 +126,7 @@ def semantic_analyze(
         return None
 
 
-def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+def _extract_json_from_text(text: str) -> dict[str, Any] | None:
     """Try to extract JSON from text that may have surrounding content."""
     # Find JSON object boundaries
     start = text.find('{')
@@ -146,7 +148,7 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _validate_response(content: Any) -> Optional[Dict[str, Any]]:
+def _validate_response(content: Any) -> dict[str, Any] | None:
     """Validate and normalize the response from Claude."""
     if not isinstance(content, dict):
         return None
@@ -220,8 +222,8 @@ def validate_tool_error(
     count: int,
     suggested_guideline: str,
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    model: str | None = None
+) -> dict[str, Any] | None:
     """
     Validate a tool error pattern and refine its guideline using Claude.
 
@@ -314,10 +316,10 @@ def validate_tool_error(
 
 
 def validate_tool_errors(
-    aggregated_errors: list,
+    aggregated_errors: list[dict[str, Any]],
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
+    model: str | None = None
+) -> list[dict[str, Any]]:
     """
     Validate a list of aggregated tool errors using semantic analysis.
 
@@ -403,10 +405,10 @@ Rules:
 
 
 def detect_contradictions(
-    entries: list,
+    entries: list[str],
     timeout: int = DEFAULT_TIMEOUT,
-    model: Optional[str] = None
-) -> list:
+    model: str | None = None
+) -> list[dict[str, Any]]:
     """
     Find semantically contradicting entries in a list of CLAUDE.md entries.
 

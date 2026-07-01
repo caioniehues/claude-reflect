@@ -3,18 +3,20 @@
 
 Cross-platform compatible (Windows, macOS, Linux).
 """
+from __future__ import annotations
+
 import json
 import re
 import os
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple, NamedTuple
+from typing import Any, NamedTuple
 
 # =============================================================================
 # Path utilities
 # =============================================================================
 
-def get_queue_path(project_dir: Optional[str] = None) -> Path:
+def get_queue_path(project_dir: str | None = None) -> Path:
     """Get path to learnings queue file, scoped to the current project.
 
     Queue files are stored per-project to prevent cross-project leakage:
@@ -61,7 +63,7 @@ def migrate_global_queue() -> None:
         return
 
     # Group items by project
-    by_project: Dict[str, List[Dict[str, Any]]] = {}
+    by_project: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         project = item.get("project", "")
         if project not in by_project:
@@ -130,7 +132,7 @@ def get_claude_dir() -> Path:
     return Path.home() / ".claude"
 
 
-def get_cleanup_period_days() -> Optional[int]:
+def get_cleanup_period_days() -> int | None:
     """Get cleanupPeriodDays from ~/.claude/settings.json. Returns None if not set."""
     settings_path = get_claude_dir() / "settings.json"
     if not settings_path.exists():
@@ -142,6 +144,32 @@ def get_cleanup_period_days() -> Optional[int]:
         return None
 
 
+def get_cleanup_warned_sentinel_path() -> Path:
+    """Sentinel marking the cleanupPeriodDays retention nag as already shown."""
+    return get_claude_dir() / ".reflect-cleanup-warned"
+
+
+def should_warn_cleanup_once() -> bool:
+    """Whether to show the retention nag this session.
+
+    True only when cleanupPeriodDays is unset or too low AND the nag has not been
+    shown before. Writes the sentinel on the first True so the warning fires once,
+    not every session at the default 30 (hook noise, review insight IV).
+    """
+    cleanup_days = get_cleanup_period_days()
+    if cleanup_days is not None and cleanup_days > 30:
+        return False
+    sentinel = get_cleanup_warned_sentinel_path()
+    if sentinel.exists():
+        return False
+    try:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(iso_timestamp(), encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 # Directories to exclude when searching for CLAUDE.md files
 EXCLUDED_DIRS = {
     'node_modules', '.git', '.svn', '.hg', 'venv', '.venv', 'env', '.env',
@@ -151,7 +179,7 @@ EXCLUDED_DIRS = {
 }
 
 
-def _parse_rule_frontmatter(filepath: Path) -> Optional[Dict[str, Any]]:
+def _parse_rule_frontmatter(filepath: Path) -> dict[str, Any] | None:
     """Parse YAML-like frontmatter from a .claude/rules/*.md file.
 
     Extracts 'paths:' list without requiring PyYAML. Frontmatter is delimited
@@ -180,9 +208,9 @@ def _parse_rule_frontmatter(filepath: Path) -> Optional[Dict[str, Any]]:
     if end_idx is None:
         return None
 
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     current_key = None
-    current_list: List[str] = []
+    current_list: list[str] = []
 
     for line in lines[1:end_idx]:
         stripped = line.strip()
@@ -212,7 +240,7 @@ def _parse_rule_frontmatter(filepath: Path) -> Optional[Dict[str, Any]]:
     return result if result else None
 
 
-def find_claude_files(root_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+def find_claude_files(root_dir: str | None = None) -> list[dict[str, Any]]:
     """
     Find all memory tier files in the project tree.
 
@@ -303,9 +331,9 @@ def find_claude_files(root_dir: Optional[str] = None) -> List[Dict[str, Any]]:
 
 def suggest_claude_file(
     learning: str,
-    claude_files: List[Dict[str, Any]],
-    learning_type: Optional[str] = None,
-) -> Optional[str]:
+    claude_files: list[dict[str, Any]],
+    learning_type: str | None = None,
+) -> str | None:
     """
     Suggest which memory file a learning should go to.
 
@@ -366,7 +394,7 @@ def suggest_claude_file(
 # Auto memory utilities
 # =============================================================================
 
-def get_project_folder_name(project_dir: Optional[str] = None) -> str:
+def get_project_folder_name(project_dir: str | None = None) -> str:
     """Encode a project directory path using Claude Code's folder naming convention.
 
     /Users/bob/myapp → -Users-bob-myapp
@@ -378,7 +406,7 @@ def get_project_folder_name(project_dir: Optional[str] = None) -> str:
     return "-" + folder_name
 
 
-def get_auto_memory_path(project_dir: Optional[str] = None) -> Path:
+def get_auto_memory_path(project_dir: str | None = None) -> Path:
     """Get the auto memory directory path for a project.
 
     Returns ~/.claude/projects/<encoded>/memory/
@@ -387,7 +415,7 @@ def get_auto_memory_path(project_dir: Optional[str] = None) -> Path:
     return get_claude_dir() / "projects" / folder_name / "memory"
 
 
-def read_auto_memory(project_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+def read_auto_memory(project_dir: str | None = None) -> list[dict[str, Any]]:
     """Read all .md files from the project's auto memory directory.
 
     Returns list of {file, name, entries} where entries are non-empty lines.
@@ -443,8 +471,8 @@ def suggest_auto_memory_topic(learning: str) -> str:
 
 
 def read_all_memory_entries(
-    root_dir: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    root_dir: str | None = None,
+) -> list[dict[str, Any]]:
     """Read bullet-point entries from ALL memory tiers for cross-tier deduplication.
 
     Scans: CLAUDE.md files, rule files, CLAUDE.local.md, and auto memory.
@@ -452,7 +480,7 @@ def read_all_memory_entries(
     Returns list of {text, source_file, source_type, line_number}.
     """
     claude_files = find_claude_files(root_dir)
-    entries: List[Dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
 
     # Read entries from each CLAUDE.md / rule / local file
     for cf in claude_files:
@@ -517,7 +545,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
         raise
 
 
-def _quarantine_queue(path: Path) -> Optional[Path]:
+def _quarantine_queue(path: Path) -> Path | None:
     """Move a corrupt/unusable queue file into a co-located backups dir.
 
     Backups live at ``path.parent / "backups"`` so per-project queues keep
@@ -587,7 +615,7 @@ class _QueueLock:
         return False
 
 
-def load_queue(project_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+def load_queue(project_dir: str | None = None) -> list[dict[str, Any]]:
     """Load the project-scoped learnings queue. Pure read — no migration.
 
     Corruption-safe: an unparseable or non-list queue file is quarantined to a
@@ -616,13 +644,13 @@ def load_queue(project_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     return data
 
 
-def save_queue(items: List[Dict[str, Any]], project_dir: Optional[str] = None) -> None:
+def save_queue(items: list[dict[str, Any]], project_dir: str | None = None) -> None:
     """Save learnings queue to the project-scoped file (atomic write)."""
     path = get_queue_path(project_dir)
     _atomic_write_json(path, items)
 
 
-def append_to_queue(item: Dict[str, Any], project_dir: Optional[str] = None) -> None:
+def append_to_queue(item: dict[str, Any], project_dir: str | None = None) -> None:
     """Append a single item to the project-scoped queue.
 
     The read-modify-write is guarded by a file lock so two concurrent sessions
@@ -748,7 +776,7 @@ class Detection(NamedTuple):
     ``a, b, c, d, e = detect_patterns(...)`` and ``result[0]`` call sites keep
     working while new code can use field access.
     """
-    type: Optional[str]
+    type: str | None
     patterns: str
     confidence: float
     sentiment: str
@@ -890,8 +918,8 @@ def create_queue_item(
     confidence: float,
     sentiment: str,
     decay_days: int,
-    project: Optional[str] = None
-) -> Dict[str, Any]:
+    project: str | None = None
+) -> dict[str, Any]:
     """Create a properly formatted queue item."""
     return {
         "type": item_type,
@@ -909,7 +937,7 @@ def create_queue_item(
 # Session file utilities
 # =============================================================================
 
-def extract_user_messages(session_file: Path, corrections_only: bool = False) -> List[str]:
+def extract_user_messages(session_file: Path, corrections_only: bool = False) -> list[str]:
     """
     Extract user messages from a Claude Code session file (JSONL format).
 
@@ -1007,7 +1035,7 @@ def should_include_message(text: str) -> bool:
 _should_include_message = should_include_message
 
 
-def extract_tool_rejections(session_file: Path) -> List[str]:
+def extract_tool_rejections(session_file: Path) -> list[str]:
     """
     Extract user corrections from tool rejections in session files.
 
@@ -1144,7 +1172,7 @@ PROJECT_SPECIFIC_ERROR_PATTERNS = [
 def extract_tool_errors(
     session_file: Path,
     project_specific_only: bool = True
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Extract tool execution errors from session files.
 
@@ -1240,9 +1268,9 @@ def extract_tool_errors(
 
 
 def aggregate_tool_errors(
-    errors: List[Dict[str, Any]],
+    errors: list[dict[str, Any]],
     min_occurrences: int = 2
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Group errors by type and return those with multiple occurrences.
 
@@ -1262,7 +1290,7 @@ def aggregate_tool_errors(
     type_counts = Counter(e["error_type"] for e in errors)
 
     # Group errors by type
-    errors_by_type: Dict[str, List[Dict]] = {}
+    errors_by_type: dict[str, list[dict[str, Any]]] = {}
     for error in errors:
         etype = error["error_type"]
         if etype not in errors_by_type:

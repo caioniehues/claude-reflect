@@ -1,4 +1,6 @@
 #!/bin/bash
+# COUPLING: differential-test oracle for the Python port — tests/test_integration.py
+# (BASH_SCRIPTS) compares the Python script output against this. Do not delete.
 # Extract corrections from tool rejections in Claude Code session files
 # Usage: extract-tool-rejections.sh <session-file>
 #
